@@ -491,7 +491,7 @@
 
     // ── PANEL REGISTRO ─────────────────────────────────────────────────────────
     const PanelRegistro = ({ sesion, showToast }) => {
-      const [form, setForm]   = useState({ dni:"", nombre:"", apellido:"", nacimiento:"", sexo:"" });
+      const [form, setForm]   = useState({ dni:"", nombre:"", apellido:"", nacimiento:"", sexo:"", tel:"", email:"" });
       const [err, setErr]     = useState({});
       const [done, setDone]   = useState(null);
       const [loading, setLoading] = useState(false);
@@ -513,17 +513,19 @@
           if(!(f.getFullYear()===y&&f.getMonth()===m-1&&f.getDate()===d&&y>=1920&&y<=2008)) e.nacimiento="Fecha inválida";
         }
         if (!form.sexo) e.sexo="Seleccioná una opción";
+        if (form.tel && !/^[\d\s\-\+\(\)]{6,20}$/.test(form.tel)) e.tel="Teléfono inválido";
+        if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email="Email inválido";
         if (Object.keys(e).length>0) { setErr(e); setLoading(false); return; }
         const limpio2=form.nacimiento.replace(/\D/g,"");
         const nacFmt=`${limpio2.slice(0,2)}/${limpio2.slice(2,4)}/${limpio2.slice(4)}`;
-        const nuevo={ dni:form.dni, nombre:form.nombre.trim(), apellido:form.apellido.trim(), nacimiento:nacFmt, sexo:form.sexo, puntos:250, nivel:"Bronce", compras:0, registrado:hoy(), sucursalOrigen:sesion.sucursal.nombre, historial:[] };
+        const nuevo={ dni:form.dni, nombre:form.nombre.trim(), apellido:form.apellido.trim(), nacimiento:nacFmt, sexo:form.sexo, tel:form.tel.trim(), email:form.email.trim(), puntos:250, nivel:"Bronce", compras:0, registrado:hoy(), sucursalOrigen:sesion.sucursal.nombre, historial:[] };
         await saveCliente(nuevo);
         await logMovimiento({ tipo:"registro", dni:nuevo.dni, nombre:`${nuevo.nombre} ${nuevo.apellido}`, pts:250, sucursalId:sesion.sucursal.id, sucursal:sesion.sucursal.nombre, cajero:sesion.cajero, fecha:hoy(), hora:now() });
         setDone(nuevo); setLoading(false);
         showToast(`🎉 ${nuevo.nombre} registrado en Firebase`);
       };
 
-      const reset = () => { setForm({dni:"",nombre:"",apellido:"",nacimiento:"",sexo:""}); setErr({}); setDone(null); };
+      const reset = () => { setForm({dni:"",nombre:"",apellido:"",nacimiento:"",sexo:"",tel:"",email:""}); setErr({}); setDone(null); };
 
       if (done) return (
         <div style={{ maxWidth:460, animation:"popIn .4s ease" }}>
@@ -548,7 +550,7 @@
           </div>
           <div style={{ background:"#fff", borderRadius:22, padding:28, boxShadow:"0 2px 14px rgba(0,0,0,.07)" }}>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
-              {[["DNI *","dni","30456789",8,"numeric"],["","_","","",],["Nombre *","nombre","María","",""],["Apellido *","apellido","García","",""],["Fecha nacimiento *","nacimiento","15031990",8,"numeric"]].map(([label,k,ph,ml,im])=>
+              {[["DNI *","dni","30456789",8,"numeric"],["","_","","",],["Nombre *","nombre","María","",""],["Apellido *","apellido","García","",""],["Fecha nacimiento *","nacimiento","15031990",8,"numeric"],["Teléfono","tel","11 1234-5678","","tel"],["Email","email","maria@gmail.com","","email"]].map(([label,k,ph,ml,im])=>
                 k&&k!=="__"&&k!=="_" ? (
                   <div key={k}>
                     <label style={{fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:5}}>{label}</label>
@@ -628,7 +630,7 @@
                 </div>
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
-                {[{l:"Puntos",v:cliente.puntos.toLocaleString(),c:"#f59e0b"},{l:"Cashback",v:`$${(cliente.puntos*.05).toFixed(0)}`,c:"#10b981"},{l:"Compras",v:cliente.compras,c:"#6366f1"},{l:"Nacimiento",v:cliente.nacimiento||"—",c:"#64748b"}].map(s=>(
+                {[{l:"Puntos",v:cliente.puntos.toLocaleString(),c:"#f59e0b"},{l:"Cashback",v:`$${(cliente.puntos*.05).toFixed(0)}`,c:"#10b981"},{l:"Compras",v:cliente.compras,c:"#6366f1"},{l:"Nacimiento",v:cliente.nacimiento||"—",c:"#64748b"},{l:"Teléfono",v:cliente.tel||"—",c:"#0ea5e9"},{l:"Email",v:cliente.email||"—",c:"#8b5cf6"}].map(s=>(
                   <div key={s.l} style={{background:"#f9fafb",borderRadius:10,padding:10,textAlign:"center"}}>
                     <div style={{fontSize:16,fontWeight:900,color:s.c}}>{s.v}</div>
                     <div style={{fontSize:9,color:"#aaa",fontWeight:600}}>{s.l}</div>
