@@ -98,10 +98,10 @@
       const snap = await db.collection("movimientos")
         .where("sucursalId","==",sucursalId)
         .where("fecha","==",hoy())
-        .orderBy("timestamp","desc")
-        .limit(50)
         .get();
-      return snap.docs.map(d => ({ id:d.id, ...d.data() }));
+      const docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+      // Sort by hora desc client-side
+      return docs.sort((a,b) => (b.hora||"").localeCompare(a.hora||""));
     };
 
     const Spinner = ({ size=24, color="#E30613" }) => (
@@ -907,31 +907,125 @@
 
     // ── PANEL HISTORIAL ────────────────────────────────────────────────────────
     const PanelHistorial = ({ sesion }) => {
-      const [log, setLog]     = useState([]);
+      const [log, setLog]         = useState([]);
       const [loading, setLoading] = useState(true);
-      useEffect(() => {
-        getMovimientosDia(sesion.sucursal.id).then(data=>{setLog(data);setLoading(false);}).catch(()=>setLoading(false));
-      }, []);
-      const iconos={venta:"💳",canje:"🎁",registro:"➕"};
-      const colores={venta:"#f0fdf4",canje:"#faf5ff",registro:"#fffbeb"};
+      const [error, setError]     = useState(null);
+
+      const cargar = () => {
+        setLoading(true);
+        setError(null);
+        getMovimientosDia(sesion.sucursal.id)
+          .then(data => { setLog(data); setLoading(false); })
+          .catch(err => { setError(err.message); setLoading(false); });
+      };
+
+      useEffect(()=>{ cargar(); }, []);
+
+      const exportarCSV = () => {
+        const header = "Hora,Tipo,Cliente,DNI,Monto,Puntos,Cajero";
+        const rows = log.map(l =>
+          `${l.hora||""},${l.tipo||""},${l.nombre||""},${l.dni||""},${l.monto||0},${l.pts||0},${l.cajero||""}`
+        );
+        const csv = [header, ...rows].join("
+");
+        const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement("a");
+        a.href = url;
+        a.download = `sumaprix_${sesion.sucursal.id}_${hoy().replace(/\//g,"-")}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+
+      const iconos  = { venta:"💳", canje:"🎁", registro:"➕" };
+      const colores = { venta:"#f0fdf4", canje:"#faf5ff", registro:"#fffbeb" };
+      const totalVentas   = log.filter(l=>l.tipo==="venta").length;
+      const totalPts      = log.filter(l=>l.tipo==="venta").reduce((a,l)=>a+(l.pts||0),0);
+      const totalCanjes   = log.filter(l=>l.tipo==="canje").length;
+      const totalRegistros= log.filter(l=>l.tipo==="registro").length;
+      const totalMonto    = log.filter(l=>l.tipo==="venta").reduce((a,l)=>a+(Number(l.monto)||0),0);
+
       return (
         <div style={{ maxWidth:820 }}>
-          <div style={{ marginBottom:24 }}>
-            <div style={{ fontSize:22, fontWeight:900, color:"#111" }}>Movimientos del día</div>
-            <div style={{ fontSize:13, color:"#888" }}>Operaciones de hoy · {sesion.sucursal.nombre}</div>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
+            <div>
+              <div style={{ fontSize:22, fontWeight:900, color:"#111" }}>Movimientos del día</div>
+              <div style={{ fontSize:13, color:"#888" }}>{hoy()} · {sesion.sucursal.nombre} · {sesion.cajero}</div>
+            </div>
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={cargar}
+                style={{ padding:"9px 16px", borderRadius:10, border:"1px solid #e5e7eb", background:"#fff", color:"#555", fontWeight:700, fontSize:12, cursor:"pointer" }}>
+                🔄 Actualizar
+              </button>
+              {log.length > 0 && (
+                <button onClick={exportarCSV}
+                  style={{ padding:"9px 16px", borderRadius:10, border:"none", background:"#111", color:"#fff", fontWeight:700, fontSize:12, cursor:"pointer" }}>
+                  ⬇️ Exportar CSV
+                </button>
+              )}
+            </div>
           </div>
+
+          {/* Resumen del día */}
+          {!loading && log.length > 0 && (
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:10, marginBottom:20 }}>
+              {[
+                { l:"Ventas",     v:totalVentas,                    c:"#10b981", bg:"#f0fdf4" },
+                { l:"Monto total",v:`$${totalMonto.toLocaleString()}`, c:"#f59e0b", bg:"#fffbeb" },
+                { l:"Pts emitidos",v:totalPts.toLocaleString(),      c:"#6366f1", bg:"#eff6ff" },
+                { l:"Canjes",     v:totalCanjes,                    c:"#8b5cf6", bg:"#faf5ff" },
+                { l:"Nuevos",     v:totalRegistros,                  c:"#E30613", bg:"#fff5f5" },
+              ].map(s=>(
+                <div key={s.l} style={{ background:s.bg, borderRadius:14, padding:"12px 10px", textAlign:"center", border:`1px solid ${s.c}22` }}>
+                  <div style={{ fontSize:20, fontWeight:900, color:s.c }}>{s.v}</div>
+                  <div style={{ fontSize:10, color:"#888", fontWeight:600, marginTop:2 }}>{s.l}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {error && (
+            <div style={{ background:"#fef2f2", borderRadius:14, padding:16, marginBottom:16, color:"#dc2626", fontSize:13, fontWeight:600 }}>
+              ⚠️ Error al cargar: {error}
+              <button onClick={cargar} style={{ marginLeft:12, padding:"4px 12px", borderRadius:8, border:"none", background:"#dc2626", color:"#fff", fontWeight:700, fontSize:11, cursor:"pointer" }}>
+                Reintentar
+              </button>
+            </div>
+          )}
+
           <div style={{ background:"#fff", borderRadius:18, overflow:"hidden", boxShadow:"0 2px 10px rgba(0,0,0,.06)" }}>
             {loading && <div style={{padding:40,textAlign:"center",display:"flex",justifyContent:"center"}}><Spinner size={32}/></div>}
-            {!loading&&log.length===0 && <div style={{padding:40,textAlign:"center",color:"#ccc"}}><div style={{fontSize:36,marginBottom:8}}>📋</div><div style={{fontSize:13}}>Sin movimientos hoy</div></div>}
+            {!loading && !error && log.length===0 && (
+              <div style={{padding:40,textAlign:"center",color:"#ccc"}}>
+                <div style={{fontSize:36,marginBottom:8}}>📋</div>
+                <div style={{fontSize:13}}>Sin movimientos hoy en {sesion.sucursal.nombre}</div>
+                <div style={{fontSize:11,marginTop:6,color:"#ddd"}}>Los movimientos aparecen automáticamente al procesar ventas</div>
+              </div>
+            )}
+
+            {/* Header tabla */}
+            {!loading && log.length > 0 && (
+              <div style={{display:"flex",alignItems:"center",gap:14,padding:"10px 18px",background:"#f9fafb",borderBottom:"1px solid #f3f4f6"}}>
+                <div style={{width:36}}/>
+                <div style={{flex:1,fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:.5}}>Cliente</div>
+                <div style={{width:80,fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:.5,textAlign:"center"}}>Monto</div>
+                <div style={{width:80,fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:.5,textAlign:"right"}}>Puntos</div>
+              </div>
+            )}
+
             {log.map((l,i)=>(
-              <div key={i} style={{display:"flex",alignItems:"center",gap:14,padding:"13px 18px",borderBottom:"1px solid #f3f4f6"}}>
-                <div style={{width:36,height:36,borderRadius:9,background:colores[l.tipo]||"#f9fafb",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>{iconos[l.tipo]||"📌"}</div>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:13,fontWeight:700,color:"#111"}}>{l.nombre}</div>
-                  <div style={{fontSize:11,color:"#aaa"}}>{l.hora} · {l.cajero}</div>
+              <div key={i} style={{display:"flex",alignItems:"center",gap:14,padding:"13px 18px",borderBottom:"1px solid #f3f4f6",animation:"fadeIn .3s ease"}}>
+                <div style={{width:36,height:36,borderRadius:9,background:colores[l.tipo]||"#f9fafb",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
+                  {iconos[l.tipo]||"📌"}
                 </div>
-                {l.monto&&<div style={{fontSize:12,color:"#555",fontWeight:600}}>${Number(l.monto).toLocaleString()}</div>}
-                <div style={{fontSize:13,fontWeight:900,color:l.tipo==="canje"?"#7c3aed":"#10b981",minWidth:70,textAlign:"right"}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#111",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.nombre}</div>
+                  <div style={{fontSize:11,color:"#aaa"}}>{l.hora} · DNI {l.dni} · {l.cajero}</div>
+                </div>
+                <div style={{width:80,textAlign:"center"}}>
+                  {l.monto ? <span style={{fontSize:13,color:"#555",fontWeight:600}}>${Number(l.monto).toLocaleString()}</span> : <span style={{color:"#ddd"}}>—</span>}
+                </div>
+                <div style={{width:80,textAlign:"right",fontSize:13,fontWeight:900,color:l.tipo==="canje"?"#7c3aed":"#10b981"}}>
                   {l.tipo==="canje"?`-${l.pts} pts`:`+${l.pts} pts`}
                 </div>
               </div>
