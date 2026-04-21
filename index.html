@@ -53,14 +53,24 @@
       { id:"petion",       nombre:"Petión",       zona:"Sur",   pin:"9012", cajeros:["Gabriel","Micaela"] },
     ];
 
-    const PREMIOS = [
-      { id:1, nombre:"Gaseosa 2.25L",   pts:500, emoji:"🥤" },
-      { id:2, nombre:"Agua x6 unid.",   pts:400, emoji:"💧" },
-      { id:3, nombre:"Cerveza 1L",      pts:900, emoji:"🍺" },
-      { id:4, nombre:"Jugo Cepita x3",  pts:650, emoji:"🧃" },
-      { id:5, nombre:"Pack Snacks x4",  pts:750, emoji:"🍟" },
-      { id:6, nombre:"Pringles Grande", pts:550, emoji:"🫙" },
+    const PREMIOS_DEFAULT = [
+      { id:"p1", nombre:"Gaseosa 2.25L",   pts:500, emoji:"🥤", stock:8,  activo:true },
+      { id:"p2", nombre:"Agua x6 unid.",   pts:400, emoji:"💧", stock:12, activo:true },
+      { id:"p3", nombre:"Cerveza 1L",      pts:900, emoji:"🍺", stock:3,  activo:true },
+      { id:"p4", nombre:"Jugo Cepita x3",  pts:650, emoji:"🧃", stock:7,  activo:true },
+      { id:"p5", nombre:"Pack Snacks x4",  pts:750, emoji:"🍟", stock:5,  activo:true },
+      { id:"p6", nombre:"Pringles Grande", pts:550, emoji:"🫙", stock:10, activo:true },
     ];
+    const getPremios = async () => {
+      const snap = await db.collection("premios").where("activo","==",true).get();
+      if (snap.empty) return PREMIOS_DEFAULT;
+      return snap.docs.map(d=>({id:d.id,...d.data()}));
+    };
+    const getAllPremios = async () => {
+      const snap = await db.collection("premios").get();
+      if (snap.empty) return PREMIOS_DEFAULT;
+      return snap.docs.map(d=>({id:d.id,...d.data()}));
+    };
 
     const NIVEL = {
       Bronce:   { emoji:"🥉", color:"#b45309", bg:"#fef3c7" },
@@ -180,6 +190,7 @@
         { id:"registro",  icon:"➕", label:"Nuevo Cliente"  },
         { id:"consulta",  icon:"🔍", label:"Consultar"      },
         { id:"historial", icon:"📋", label:"Movimientos"    },
+        { id:"catalogo",  icon:"🏷️", label:"Catálogo"       },
       ];
       return (
         <div style={{ width:215, background:"#111318", display:"flex", flexDirection:"column", height:"100vh", position:"sticky", top:0, flexShrink:0 }}>
@@ -388,11 +399,13 @@
 
     // ── PANEL CANJE ────────────────────────────────────────────────────────────
     const PanelCanje = ({ sesion, onCanje, showToast }) => {
-      const [dni, setDni]       = useState("");
+      const [dni, setDni]         = useState("");
       const [cliente, setCliente] = useState(null);
-      const [sel, setSel]       = useState(null);
-      const [done, setDone]     = useState(false);
+      const [sel, setSel]         = useState(null);
+      const [done, setDone]       = useState(false);
       const [loading, setLoading] = useState(false);
+      const [premios, setPremios] = useState([]);
+      useEffect(()=>{ getPremios().then(setPremios); },[]);
 
       const buscar = async () => {
         if (!/^\d{7,8}$/.test(dni)) return;
@@ -454,7 +467,7 @@
               <div>
                 <div style={{ fontSize:12, fontWeight:700, color:"#aaa", textTransform:"uppercase", letterSpacing:.5, marginBottom:10 }}>Seleccioná el premio</div>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:14 }}>
-                  {PREMIOS.map(p=>{
+                  {premios.map(p=>{
                     const puede=cliente.puntos>=p.pts, isSel=sel&&sel.id===p.id;
                     return <div key={p.id} onClick={()=>puede&&setSel(p)}
                       style={{ background:"#fff", borderRadius:14, padding:14, textAlign:"center", cursor:puede?"pointer":"not-allowed", border:`2px solid ${isSel?"#E30613":puede?"#e5e7eb":"#f3f4f6"}`, opacity:puede?1:.45 }}>
@@ -587,21 +600,51 @@
 
     // ── PANEL CONSULTA ─────────────────────────────────────────────────────────
     const PanelConsulta = () => {
-      const [dni, setDni]       = useState("");
-      const [cliente, setCliente] = useState(null);
+      const [dni, setDni]           = useState("");
+      const [cliente, setCliente]   = useState(null);
       const [notFound, setNotFound] = useState(false);
       const [loading, setLoading]   = useState(false);
+      const [editando, setEditando] = useState(false);
+      const [form, setForm]         = useState({});
+      const [saving, setSaving]     = useState(false);
+      const [saved, setSaved]       = useState(false);
 
       const buscar = async () => {
         if (!/^\d{7,8}$/.test(dni)) return;
         setLoading(true);
         const c = await getCliente(dni);
         setLoading(false);
-        if (c) { setCliente(c); setNotFound(false); }
+        if (c) { setCliente(c); setNotFound(false); setEditando(false); setSaved(false); }
         else   { setCliente(null); setNotFound(true); }
       };
 
+      const iniciarEdicion = () => {
+        setForm({
+          nombre:    cliente.nombre    || "",
+          apellido:  cliente.apellido  || "",
+          nacimiento:cliente.nacimiento|| "",
+          tel:       cliente.tel       || "",
+          email:     cliente.email     || "",
+          sexo:      cliente.sexo      || "",
+        });
+        setEditando(true);
+        setSaved(false);
+      };
+
+      const guardarEdicion = async () => {
+        setSaving(true);
+        const updated = { ...cliente, ...form, nombre:form.nombre.trim(), apellido:form.apellido.trim(), tel:form.tel.trim(), email:form.email.trim() };
+        await saveCliente(updated);
+        setCliente(updated);
+        setSaving(false);
+        setEditando(false);
+        setSaved(true);
+        setTimeout(()=>setSaved(false), 3000);
+      };
+
+      const set = (k,v) => setForm(f=>({...f,[k]:v}));
       const niv = cliente ? NIVEL[cliente.nivel] : null;
+
       return (
         <div style={{ maxWidth:700 }}>
           <div style={{ marginBottom:24 }}>
@@ -616,8 +659,12 @@
               {loading?<Spinner size={16} color="#fff"/>:"Buscar"}
             </button>
           </div>
+
           {notFound && <div style={{background:"#fef2f2",borderRadius:14,padding:18,textAlign:"center",color:"#dc2626",fontWeight:700,fontSize:13}}>⚠️ DNI {dni} no encontrado</div>}
-          {cliente && (
+
+          {saved && <div style={{background:"#f0fdf4",borderRadius:14,padding:"12px 18px",marginBottom:14,textAlign:"center",color:"#15803d",fontWeight:700,fontSize:13,animation:"fadeIn .3s ease"}}>✅ Datos actualizados correctamente en Firebase</div>}
+
+          {cliente && !editando && (
             <div style={{ background:"#fff", borderRadius:18, padding:22, boxShadow:"0 2px 10px rgba(0,0,0,.06)", animation:"fadeIn .3s ease" }}>
               <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:18, paddingBottom:18, borderBottom:"1px solid #f3f4f6" }}>
                 <div style={{width:52,height:52,borderRadius:14,background:niv.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26}}>{niv.emoji}</div>
@@ -625,18 +672,233 @@
                   <div style={{fontSize:19,fontWeight:900,color:"#111"}}>{cliente.nombre} {cliente.apellido}</div>
                   <div style={{fontSize:12,color:"#aaa"}}>DNI {cliente.dni} · Registrado: {cliente.registrado||"—"}</div>
                 </div>
-                <div style={{background:niv.bg,borderRadius:10,padding:"7px 14px"}}>
-                  <div style={{fontSize:12,fontWeight:800,color:niv.color}}>Nivel {cliente.nivel}</div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <div style={{background:niv.bg,borderRadius:10,padding:"7px 14px"}}>
+                    <div style={{fontSize:12,fontWeight:800,color:niv.color}}>Nivel {cliente.nivel}</div>
+                  </div>
+                  <button onClick={iniciarEdicion}
+                    style={{padding:"7px 14px",borderRadius:10,border:"2px solid #e5e7eb",background:"#fff",color:"#555",fontWeight:700,fontSize:12,display:"flex",alignItems:"center",gap:5}}>
+                    ✏️ Editar
+                  </button>
                 </div>
               </div>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
-                {[{l:"Puntos",v:cliente.puntos.toLocaleString(),c:"#f59e0b"},{l:"Cashback",v:`$${(cliente.puntos*.05).toFixed(0)}`,c:"#10b981"},{l:"Compras",v:cliente.compras,c:"#6366f1"},{l:"Nacimiento",v:cliente.nacimiento||"—",c:"#64748b"},{l:"Teléfono",v:cliente.tel||"—",c:"#0ea5e9"},{l:"Email",v:cliente.email||"—",c:"#8b5cf6"}].map(s=>(
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+                {[
+                  {l:"Puntos",     v:cliente.puntos.toLocaleString(), c:"#f59e0b"},
+                  {l:"Cashback",   v:`$${(cliente.puntos*.05).toFixed(0)}`, c:"#10b981"},
+                  {l:"Compras",    v:cliente.compras, c:"#6366f1"},
+                  {l:"Nacimiento", v:cliente.nacimiento||"—", c:"#64748b"},
+                  {l:"Teléfono",   v:cliente.tel||"—", c:"#0ea5e9"},
+                  {l:"Email",      v:cliente.email||"—", c:"#8b5cf6"},
+                ].map(s=>(
                   <div key={s.l} style={{background:"#f9fafb",borderRadius:10,padding:10,textAlign:"center"}}>
-                    <div style={{fontSize:16,fontWeight:900,color:s.c}}>{s.v}</div>
-                    <div style={{fontSize:9,color:"#aaa",fontWeight:600}}>{s.l}</div>
+                    <div style={{fontSize:14,fontWeight:900,color:s.c,wordBreak:"break-all"}}>{s.v}</div>
+                    <div style={{fontSize:9,color:"#aaa",fontWeight:600,marginTop:2}}>{s.l}</div>
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {cliente && editando && (
+            <div style={{ background:"#fff", borderRadius:18, padding:24, boxShadow:"0 2px 10px rgba(0,0,0,.06)", animation:"fadeIn .3s ease" }}>
+              <div style={{ fontSize:15, fontWeight:800, color:"#111", marginBottom:4 }}>Editando ficha de {cliente.nombre}</div>
+              <div style={{ fontSize:12, color:"#aaa", marginBottom:20 }}>DNI {cliente.dni} · Los puntos y nivel no se pueden modificar desde acá</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:16 }}>
+                {[
+                  ["Nombre",     "nombre",     "María",           ""],
+                  ["Apellido",   "apellido",   "García",          ""],
+                  ["Nacimiento", "nacimiento", "15/03/1990",      ""],
+                  ["Teléfono",   "tel",        "11 1234-5678",    "tel"],
+                  ["Email",      "email",      "maria@gmail.com", "email"],
+                ].map(([label,k,ph,im])=>(
+                  <div key={k}>
+                    <label style={{fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:5}}>{label}</label>
+                    <input value={form[k]||""} onChange={e=>set(k,e.target.value)} placeholder={ph} inputMode={im||"text"}
+                      style={{width:"100%",padding:"10px 14px",borderRadius:11,border:"2px solid #e5e7eb",fontSize:14,fontWeight:600,outline:"none",color:"#111"}}/>
+                  </div>
+                ))}
+                <div>
+                  <label style={{fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:5}}>Género</label>
+                  <div style={{display:"flex",gap:8}}>
+                    {[["M","👨 Masc."],["F","👩 Fem."],["NB","🧑 N/B"]].map(([v,l])=>(
+                      <button key={v} onClick={()=>set("sexo",v)}
+                        style={{flex:1,padding:"9px 4px",borderRadius:10,border:`2px solid ${form.sexo===v?"#E30613":"#e5e7eb"}`,background:form.sexo===v?"#fff5f5":"#fafafa",color:form.sexo===v?"#E30613":"#555",fontWeight:700,fontSize:11}}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:10}}>
+                <button onClick={()=>setEditando(false)}
+                  style={{flex:1,padding:"12px",borderRadius:12,border:"1px solid #e5e7eb",background:"#fff",color:"#555",fontWeight:700,fontSize:13}}>
+                  Cancelar
+                </button>
+                <button onClick={guardarEdicion} disabled={saving}
+                  style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#E30613,#c0000f)",color:"#fff",fontWeight:800,fontSize:14,boxShadow:"0 6px 18px rgba(227,6,19,.25)",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                  {saving?<><Spinner size={16} color="#fff"/> Guardando...</>:"Guardar cambios ✓"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    // ── PANEL CATALOGO ─────────────────────────────────────────────────────────
+    const PanelCatalogo = ({ showToast }) => {
+      const [premios, setPremios]   = useState([]);
+      const [loading, setLoading]   = useState(true);
+      const [editando, setEditando] = useState(null); // null | "nuevo" | premio.id
+      const [form, setForm]         = useState({ nombre:"", pts:"", emoji:"🎁", stock:"", activo:true });
+      const [saving, setSaving]     = useState(false);
+
+      const cargar = async () => {
+        setLoading(true);
+        const lista = await getAllPremios();
+        setPremios(lista);
+        setLoading(false);
+      };
+
+      useEffect(()=>{ cargar(); },[]);
+
+      const iniciarNuevo = () => {
+        setForm({ nombre:"", pts:"", emoji:"🎁", stock:"10", activo:true });
+        setEditando("nuevo");
+      };
+
+      const iniciarEdicion = (p) => {
+        setForm({ nombre:p.nombre, pts:String(p.pts), emoji:p.emoji||"🎁", stock:String(p.stock||0), activo:p.activo!==false });
+        setEditando(p.id);
+      };
+
+      const guardar = async () => {
+        if (!form.nombre.trim() || !form.pts) { showToast("⚠️ Completá nombre y puntos"); return; }
+        setSaving(true);
+        const data = { nombre:form.nombre.trim(), pts:Number(form.pts), emoji:form.emoji, stock:Number(form.stock||0), activo:form.activo };
+        if (editando === "nuevo") {
+          await db.collection("premios").add(data);
+          showToast(`✅ Premio "${data.nombre}" agregado`);
+        } else {
+          await db.collection("premios").doc(editando).set(data, { merge:true });
+          showToast(`✅ Premio "${data.nombre}" actualizado`);
+        }
+        setSaving(false);
+        setEditando(null);
+        cargar();
+      };
+
+      const toggleActivo = async (p) => {
+        await db.collection("premios").doc(p.id).set({ activo:!p.activo }, { merge:true });
+        showToast(p.activo ? `⏸️ "${p.nombre}" desactivado` : `▶️ "${p.nombre}" activado`);
+        cargar();
+      };
+
+      const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+      const EMOJIS = ["🥤","💧","🍺","🧃","🍟","🫙","🍕","🍫","☕","🧁","🎁","🛍️","🏆","⭐","🎯"];
+
+      return (
+        <div style={{ maxWidth:800 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
+            <div>
+              <div style={{ fontSize:22, fontWeight:900, color:"#111" }}>Catálogo de Premios</div>
+              <div style={{ fontSize:13, color:"#888" }}>Administrá los premios disponibles para canje</div>
+            </div>
+            {!editando && (
+              <button onClick={iniciarNuevo}
+                style={{ padding:"11px 20px", borderRadius:12, border:"none", background:"linear-gradient(135deg,#E30613,#c0000f)", color:"#fff", fontWeight:800, fontSize:13, boxShadow:"0 4px 14px rgba(227,6,19,.25)" }}>
+                + Agregar premio
+              </button>
+            )}
+          </div>
+
+          {editando && (
+            <div style={{ background:"#fff", borderRadius:20, padding:24, boxShadow:"0 4px 16px rgba(0,0,0,.08)", marginBottom:20, border:"2px solid rgba(227,6,19,.15)", animation:"fadeIn .3s ease" }}>
+              <div style={{ fontSize:15, fontWeight:800, color:"#111", marginBottom:18 }}>
+                {editando==="nuevo" ? "➕ Nuevo premio" : "✏️ Editar premio"}
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:16 }}>
+                <div>
+                  <label style={{fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:5}}>Nombre del premio *</label>
+                  <input value={form.nombre} onChange={e=>set("nombre",e.target.value)} placeholder="Ej: Gaseosa 2.25L"
+                    style={{width:"100%",padding:"10px 14px",borderRadius:11,border:"2px solid #e5e7eb",fontSize:14,fontWeight:600,outline:"none",color:"#111"}}/>
+                </div>
+                <div>
+                  <label style={{fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:5}}>Puntos requeridos *</label>
+                  <input value={form.pts} onChange={e=>set("pts",e.target.value.replace(/\D/g,""))} placeholder="500" inputMode="numeric"
+                    style={{width:"100%",padding:"10px 14px",borderRadius:11,border:"2px solid #e5e7eb",fontSize:14,fontWeight:600,outline:"none",color:"#111"}}/>
+                </div>
+                <div>
+                  <label style={{fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:5}}>Stock disponible</label>
+                  <input value={form.stock} onChange={e=>set("stock",e.target.value.replace(/\D/g,""))} placeholder="10" inputMode="numeric"
+                    style={{width:"100%",padding:"10px 14px",borderRadius:11,border:"2px solid #e5e7eb",fontSize:14,fontWeight:600,outline:"none",color:"#111"}}/>
+                </div>
+                <div>
+                  <label style={{fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:5}}>Emoji</label>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {EMOJIS.map(e=>(
+                      <button key={e} onClick={()=>set("emoji",e)}
+                        style={{width:36,height:36,borderRadius:8,border:`2px solid ${form.emoji===e?"#E30613":"#e5e7eb"}`,background:form.emoji===e?"#fff5f5":"#fafafa",fontSize:18,cursor:"pointer"}}>
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,padding:"10px 14px",background:"#f9fafb",borderRadius:10}}>
+                <span style={{fontSize:13,fontWeight:600,color:"#555"}}>Estado:</span>
+                <button onClick={()=>set("activo",!form.activo)}
+                  style={{padding:"5px 14px",borderRadius:20,border:"none",background:form.activo?"#dcfce7":"#fee2e2",color:form.activo?"#15803d":"#dc2626",fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                  {form.activo?"✅ Activo":"⏸️ Inactivo"}
+                </button>
+              </div>
+              <div style={{display:"flex",gap:10}}>
+                <button onClick={()=>setEditando(null)}
+                  style={{flex:1,padding:"11px",borderRadius:11,border:"1px solid #e5e7eb",background:"#fff",color:"#555",fontWeight:700,fontSize:13}}>
+                  Cancelar
+                </button>
+                <button onClick={guardar} disabled={saving}
+                  style={{flex:2,padding:"11px",borderRadius:11,border:"none",background:"linear-gradient(135deg,#E30613,#c0000f)",color:"#fff",fontWeight:800,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                  {saving?<><Spinner size={16} color="#fff"/> Guardando...</>:"Guardar en Firebase ✓"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {loading && <div style={{padding:40,textAlign:"center",display:"flex",justifyContent:"center"}}><Spinner size={32}/></div>}
+
+          {!loading && (
+            <div style={{ background:"#fff", borderRadius:18, overflow:"hidden", boxShadow:"0 2px 10px rgba(0,0,0,.06)" }}>
+              {premios.length===0 && (
+                <div style={{padding:40,textAlign:"center",color:"#ccc"}}>
+                  <div style={{fontSize:36,marginBottom:8}}>🏷️</div>
+                  <div style={{fontSize:13}}>No hay premios cargados aún</div>
+                </div>
+              )}
+              {premios.map((p,i)=>(
+                <div key={p.id} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderBottom:i<premios.length-1?"1px solid #f3f4f6":"none",opacity:p.activo===false?0.5:1,transition:"opacity .2s"}}>
+                  <div style={{width:44,height:44,borderRadius:12,background:"#f9fafb",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>
+                    {p.emoji||"🎁"}
+                  </div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,fontWeight:800,color:"#111"}}>{p.nombre}</div>
+                    <div style={{fontSize:11,color:"#aaa",marginTop:2}}>Stock: {p.stock||0} unid.</div>
+                  </div>
+                  <div style={{fontSize:16,fontWeight:900,color:"#E30613",minWidth:70,textAlign:"center"}}>{p.pts} pts</div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>iniciarEdicion(p)}
+                      style={{padding:"6px 12px",borderRadius:8,border:"1px solid #e5e7eb",background:"#fff",color:"#555",fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                      ✏️
+                    </button>
+                    <button onClick={()=>toggleActivo(p)}
+                      style={{padding:"6px 12px",borderRadius:8,border:"none",background:p.activo===false?"#dcfce7":"#fee2e2",color:p.activo===false?"#15803d":"#dc2626",fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                      {p.activo===false?"▶️":"⏸️"}
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -720,6 +982,7 @@
             {tab==="registro" && <PanelRegistro sesion={sesion} showToast={showToast}/>}
             {tab==="consulta" && <PanelConsulta/>}
             {tab==="historial"&& <PanelHistorial sesion={sesion}/>}
+            {tab==="catalogo" && <PanelCatalogo showToast={showToast}/>}
           </div>
         </div>
       );
