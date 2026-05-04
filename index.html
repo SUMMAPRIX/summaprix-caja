@@ -476,14 +476,6 @@ const Sidebar = ({
     id: "consulta",
     icon: "🔍",
     label: "Consultar Cliente"
-  }, {
-    id: "sucursales",
-    icon: "🏪",
-    label: "Sucursales"
-  }, {
-    id: "catalogo",
-    icon: "🏷️",
-    label: "Catálogo"
   }] : [{
     id: "venta",
     icon: "💳",
@@ -504,10 +496,6 @@ const Sidebar = ({
     id: "historial",
     icon: "📋",
     label: "Movimientos"
-  }, {
-    id: "catalogo",
-    icon: "🏷️",
-    label: "Catálogo"
   }];
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -3000,240 +2988,512 @@ const PanelHistorial = ({
 
 // ── APP PRINCIPAL ──────────────────────────────────────────────────────────
 
-// ── PANEL ADMIN ────────────────────────────────────────────────────────────
+
+const FB_KEY = "AIzaSyDvd7wUTP5Ew9BB5oHAUL_lvGHdmPv0or8";
+const FB_BASE = "https://firestore.googleapis.com/v1/projects/sumaprix/databases/(default)/documents";
+
+async function fbGet(col, id) {
+  const res = await fetch(`${FB_BASE}/${col}/${id}?key=${FB_KEY}`);
+  const d = await res.json();
+  return d.fields ? fbParse(d) : null;
+}
+async function fbList(col) {
+  const res = await fetch(`${FB_BASE}/${col}?key=${FB_KEY}&pageSize=300`);
+  const d = await res.json();
+  return (d.documents||[]).map(fbParse);
+}
+async function fbSet(col, id, data) {
+  const res = await fetch(`${FB_BASE}/${col}/${id}?key=${FB_KEY}`, {
+    method:"PATCH", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ fields: fbFields(data) })
+  });
+  return res.ok;
+}
+async function fbAdd(col, data) {
+  const res = await fetch(`${FB_BASE}/${col}?key=${FB_KEY}`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ fields: fbFields(data) })
+  });
+  return res.ok;
+}
+async function fbDelete(col, id) {
+  const res = await fetch(`${FB_BASE}/${col}/${id}?key=${FB_KEY}`, { method:"DELETE" });
+  return res.ok;
+}
+function fbParse(doc) {
+  const obj = { _id: doc.name ? doc.name.split("/").pop() : "" };
+  for (const [k,v] of Object.entries(doc.fields||{})) {
+    if (v.stringValue !== undefined) obj[k] = v.stringValue;
+    else if (v.integerValue !== undefined) obj[k] = Number(v.integerValue);
+    else if (v.doubleValue !== undefined) obj[k] = Number(v.doubleValue);
+    else if (v.booleanValue !== undefined) obj[k] = v.booleanValue;
+    else if (v.arrayValue) obj[k] = (v.arrayValue.values||[]).map(x=>x.stringValue||x.integerValue||"");
+  }
+  return obj;
+}
+function fbFields(obj) {
+  const f = {};
+  for (const [k,v] of Object.entries(obj)) {
+    if (k.startsWith("_")) continue;
+    if (typeof v === "string") f[k] = { stringValue: v };
+    else if (Number.isInteger(v)) f[k] = { integerValue: String(v) };
+    else if (typeof v === "number") f[k] = { doubleValue: v };
+    else if (typeof v === "boolean") f[k] = { booleanValue: v };
+    else if (Array.isArray(v)) f[k] = { arrayValue: { values: v.map(x => typeof x === "string" ? {stringValue:x} : {integerValue:String(x)}) } };
+  }
+  return f;
+}
+
+// ── PANEL ADMIN (Dashboard + Sucursales + Catálogo) ────────────────────────
 const PanelAdmin = ({ showToast }) => {
-  const [stats, setStats] = React.useState(null);
-  const [loading, setLoading] = React.useState(true);
+  const [seccion, setSeccion] = React.useState("dashboard");
+  const SECCIONES = [
+    { id:"dashboard", icon:"📊", label:"Dashboard" },
+    { id:"sucursales", icon:"🏪", label:"Sucursales" },
+    { id:"catalogo",  icon:"🏷️", label:"Catálogo" },
+  ];
+
+  return React.createElement("div", { style:{maxWidth:960} },
+    // Sub-tabs
+    React.createElement("div", { style:{display:"flex",gap:10,marginBottom:24} },
+      SECCIONES.map(s => React.createElement("button", {
+        key:s.id, onClick:()=>setSeccion(s.id),
+        style:{
+          padding:"10px 20px", borderRadius:12, border:"none", cursor:"pointer",
+          background: seccion===s.id ? "linear-gradient(135deg,#E30613,#c0000f)" : "#fff",
+          color: seccion===s.id ? "#fff" : "#555",
+          fontWeight: seccion===s.id ? 800 : 600, fontSize:13,
+          boxShadow: seccion===s.id ? "0 4px 14px rgba(227,6,19,.25)" : "0 2px 8px rgba(0,0,0,.06)",
+        }
+      }, `${s.icon} ${s.label}`))
+    ),
+    seccion === "dashboard"  && React.createElement(AdminDashboard, { showToast }),
+    seccion === "sucursales" && React.createElement(AdminSucursales, { showToast }),
+    seccion === "catalogo"   && React.createElement(AdminCatalogo,   { showToast }),
+  );
+};
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────────
+const AdminDashboard = ({ showToast }) => {
+  const [stats, setStats]       = React.useState(null);
   const [clientes, setClientes] = React.useState([]);
+  const [movimientos, setMovimientos] = React.useState([]);
+  const [sucursales, setSucursales]   = React.useState([]);
+  const [loading, setLoading]   = React.useState(true);
+  const [exportando, setExportando]   = React.useState(false);
+
+  // Filtros export
+  const [filtroCli, setFiltroCli]   = React.useState("todas");
+  const [filtroMov, setFiltroMov]   = React.useState("todas");
+  const [filtroFecha, setFiltroFecha] = React.useState("");
 
   React.useEffect(() => {
-    const FIREBASE_API_KEY = "AIzaSyDvd7wUTP5Ew9BB5oHAUL_lvGHdmPv0or8";
-    const BASE = "https://firestore.googleapis.com/v1/projects/sumaprix/databases/(default)/documents";
-
-    Promise.all([
-      fetch(`${BASE}/clientes?key=${FIREBASE_API_KEY}&pageSize=300`).then(r=>r.json()),
-      fetch(`${BASE}/movimientos?key=${FIREBASE_API_KEY}&pageSize=500`).then(r=>r.json()),
-    ]).then(([cSnap, mSnap]) => {
-      const parseDocs = (snap) => (snap.documents||[]).map(doc => {
-        const obj = {_id: doc.name.split("/").pop()};
-        for (const [k,v] of Object.entries(doc.fields||{})) {
-          if (v.stringValue !== undefined) obj[k] = v.stringValue;
-          else if (v.integerValue !== undefined) obj[k] = Number(v.integerValue);
-          else if (v.booleanValue !== undefined) obj[k] = v.booleanValue;
-        }
-        return obj;
-      });
-
-      const cs = parseDocs(cSnap);
-      const ms = parseDocs(mSnap);
-      setClientes(cs.slice(0,10));
-
+    Promise.all([fbList("clientes"), fbList("movimientos"), fbList("sucursales")]).then(([cs, ms, ss]) => {
       const niveles = {Bronce:0, Silver:0, Gold:0, Platinum:0};
       let totalPts = 0;
       cs.forEach(c => { niveles[c.nivel||"Bronce"]++; totalPts += (c.puntos||0); });
-
       const ventas   = ms.filter(m=>m.tipo==="venta");
       const canjes   = ms.filter(m=>m.tipo==="canje");
       const registros= ms.filter(m=>m.tipo==="registro");
-      const montoTotal = ventas.reduce((a,m)=>a+(Number(m.monto)||0),0);
-      const ptsEmitidos= ventas.reduce((a,m)=>a+(m.pts||0),0);
-
-      setStats({ totalClientes:cs.length, totalPts, niveles, ventas:ventas.length, canjes:canjes.length, registros:registros.length, montoTotal, ptsEmitidos });
+      setStats({
+        totalClientes:cs.length, totalPts, niveles,
+        ventas:ventas.length, canjes:canjes.length, registros:registros.length,
+        montoTotal: ventas.reduce((a,m)=>a+(Number(m.monto)||0),0),
+        ptsEmitidos: ventas.reduce((a,m)=>a+(m.pts||0),0),
+      });
+      setClientes(cs.sort((a,b)=>(b.registrado||"").localeCompare(a.registrado||"")));
+      setMovimientos(ms.sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||"")+(b.hora||"").localeCompare(a.hora||"")));
+      setSucursales([{id:"todas",nombre:"Todas las sucursales"}, ...ss]);
       setLoading(false);
     }).catch(()=>setLoading(false));
   }, []);
 
-  const NIVEL_COLORS = { Bronce:"#b45309", Silver:"#475569", Gold:"#d97706", Platinum:"#6d28d9" };
-  const NIVEL_BG     = { Bronce:"#fef3c7", Silver:"#f1f5f9", Gold:"#fffbeb", Platinum:"#ede9fe" };
-  const NIVEL_EMOJI  = { Bronce:"🥉", Silver:"🥈", Gold:"🥇", Platinum:"💎" };
+  const descargarCSV = (tipo) => {
+    setExportando(true);
+    let rows = [], header = "", filename = "";
+    const hoy = new Date().toLocaleDateString("es-AR").replace(/\//g,"-");
 
-  return React.createElement("div", { style:{maxWidth:900} },
-    React.createElement("div", { style:{marginBottom:24} },
-      React.createElement("div", { style:{fontSize:22,fontWeight:900,color:"#111"} }, "👑 Dashboard Administración"),
-      React.createElement("div", { style:{fontSize:13,color:"#888"} }, "Vista consolidada de toda la cadena BonPrix")
+    if (tipo === "clientes") {
+      const filtrados = filtroCli === "todas" ? clientes : clientes.filter(c => (c.sucursalOrigen||"").toLowerCase().includes(sucursales.find(s=>s.id===filtroCli)?.nombre?.toLowerCase()||""));
+      header = "DNI,Nombre,Apellido,Nivel,Puntos,Cashback,Compras,Nacimiento,Telefono,Email,Registrado,Sucursal Origen,Canal";
+      rows = filtrados.map(c => [
+        c.dni||"", c.nombre||"", c.apellido||"", c.nivel||"", c.puntos||0,
+        ((c.puntos||0)*0.05).toFixed(2), c.compras||0, c.nacimiento||"",
+        c.tel||"", c.email||"", c.registrado||"", c.sucursalOrigen||"", c.canalOrigen||"Panel"
+      ].join(","));
+      filename = `clientes_${filtroCli}_${hoy}.csv`;
+    } else {
+      let filtrados = movimientos;
+      if (filtroMov !== "todas") filtrados = filtrados.filter(m=>m.sucursalId===filtroMov);
+      if (filtroFecha) filtrados = filtrados.filter(m=>m.fecha===filtroFecha);
+      header = "Fecha,Hora,Tipo,Cliente,DNI,Monto,Puntos,Premio,Sucursal,Cajero";
+      rows = filtrados.map(m => [
+        m.fecha||"", m.hora||"", m.tipo||"", m.nombre||"", m.dni||"",
+        m.monto||"", m.pts||"", m.premio||"", m.sucursal||"", m.cajero||""
+      ].join(","));
+      filename = `movimientos_${filtroMov}_${filtroFecha||"todos"}${hoy}.csv`;
+    }
+
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+    setExportando(false);
+    showToast(`✅ ${rows.length} registros exportados`);
+  };
+
+  const NIVEL_C = { Bronce:"#b45309", Silver:"#475569", Gold:"#d97706", Platinum:"#6d28d9" };
+  const NIVEL_B = { Bronce:"#fef3c7", Silver:"#f1f5f9", Gold:"#fffbeb", Platinum:"#ede9fe" };
+  const NIVEL_E = { Bronce:"🥉", Silver:"🥈", Gold:"🥇", Platinum:"💎" };
+  const TIPO_C  = { venta:"#10b981", canje:"#8b5cf6", registro:"#E30613" };
+  const TIPO_I  = { venta:"💳", canje:"🎁", registro:"➕" };
+
+  if (loading) return React.createElement("div",{style:{padding:40,textAlign:"center",display:"flex",justifyContent:"center"}}, React.createElement(Spinner,{size:32}));
+  if (!stats) return null;
+
+  const SelectStyle = { padding:"8px 12px", borderRadius:10, border:"2px solid #e5e7eb", fontSize:13, fontWeight:600, color:"#111", background:"#fff", outline:"none", cursor:"pointer" };
+  const BtnExport = (tipo, label) => React.createElement("button", {
+    onClick:()=>descargarCSV(tipo), disabled:exportando,
+    style:{padding:"9px 16px",borderRadius:10,border:"none",background:"#111",color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:6}
+  }, exportando ? React.createElement(React.Fragment,null,React.createElement(Spinner,{size:14,color:"#fff"})," Exportando...") : `⬇️ ${label}`);
+
+  return React.createElement("div", null,
+    React.createElement("div",{style:{fontSize:20,fontWeight:900,color:"#111",marginBottom:4}},"👑 Dashboard General"),
+    React.createElement("div",{style:{fontSize:13,color:"#888",marginBottom:20}},"Vista consolidada · BonPrix"),
+
+    // KPIs
+    React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}},
+      [{l:"Clientes",v:stats.totalClientes,c:"#6366f1",bg:"#eff6ff",i:"👥"},
+       {l:"Pts emitidos",v:(stats.totalPts/1000).toFixed(1)+"k",c:"#f59e0b",bg:"#fffbeb",i:"⭐"},
+       {l:"Ventas",v:stats.ventas,c:"#10b981",bg:"#f0fdf4",i:"💳"},
+       {l:"Monto total",v:"$"+(stats.montoTotal/1000000).toFixed(2)+"M",c:"#E30613",bg:"#fff5f5",i:"💰"},
+      ].map(s=>React.createElement("div",{key:s.l,style:{background:s.bg,borderRadius:16,padding:"16px 14px",textAlign:"center",border:`1px solid ${s.c}22`}},
+        React.createElement("div",{style:{fontSize:22,marginBottom:4}},s.i),
+        React.createElement("div",{style:{fontSize:22,fontWeight:900,color:s.c}},s.v),
+        React.createElement("div",{style:{fontSize:10,color:"#888",fontWeight:600,marginTop:2}},s.l)
+      ))
     ),
-    loading ? React.createElement("div", { style:{padding:40,textAlign:"center",display:"flex",justifyContent:"center"} },
-      React.createElement(Spinner, { size:32 })
-    ) : stats && React.createElement("div", null,
-      // KPIs principales
-      React.createElement("div", { style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:20} },
-        [
-          {l:"Clientes totales", v:stats.totalClientes, c:"#6366f1", bg:"#eff6ff", icon:"👥"},
-          {l:"Puntos emitidos",  v:(stats.totalPts/1000).toFixed(1)+"k", c:"#f59e0b", bg:"#fffbeb", icon:"⭐"},
-          {l:"Ventas totales",   v:stats.ventas, c:"#10b981", bg:"#f0fdf4", icon:"💳"},
-          {l:"Monto acumulado",  v:"$"+(stats.montoTotal/1000).toFixed(0)+"k", c:"#E30613", bg:"#fff5f5", icon:"💰"},
-        ].map(s => React.createElement("div", { key:s.l, style:{background:s.bg,borderRadius:16,padding:"16px 14px",textAlign:"center",border:`1px solid ${s.c}22`} },
-          React.createElement("div", { style:{fontSize:24,marginBottom:4} }, s.icon),
-          React.createElement("div", { style:{fontSize:22,fontWeight:900,color:s.c} }, s.v),
-          React.createElement("div", { style:{fontSize:10,color:"#888",fontWeight:600,marginTop:2} }, s.l)
-        ))
-      ),
-      // Distribución por nivel
-      React.createElement("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20} },
-        React.createElement("div", { style:{background:"#fff",borderRadius:18,padding:20,boxShadow:"0 2px 10px rgba(0,0,0,.06)"} },
-          React.createElement("div", { style:{fontSize:14,fontWeight:800,color:"#111",marginBottom:16} }, "Distribución por Nivel"),
-          Object.entries(stats.niveles).map(([niv, cant]) =>
-            React.createElement("div", { key:niv, style:{display:"flex",alignItems:"center",gap:10,marginBottom:10} },
-              React.createElement("div", { style:{width:80,fontSize:12,fontWeight:700,color:NIVEL_COLORS[niv]} }, `${NIVEL_EMOJI[niv]} ${niv}`),
-              React.createElement("div", { style:{flex:1,background:"#f3f4f6",borderRadius:20,height:10,overflow:"hidden"} },
-                React.createElement("div", { style:{height:"100%",width:`${stats.totalClientes>0?(cant/stats.totalClientes*100):0}%`,background:NIVEL_COLORS[niv],borderRadius:20,transition:"width 1s ease"} })
-              ),
-              React.createElement("div", { style:{width:30,fontSize:12,fontWeight:800,color:NIVEL_COLORS[niv],textAlign:"right"} }, cant)
-            )
+
+    // Niveles + Operaciones
+    React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}},
+      React.createElement("div",{style:{background:"#fff",borderRadius:16,padding:20,boxShadow:"0 2px 10px rgba(0,0,0,.06)"}},
+        React.createElement("div",{style:{fontSize:14,fontWeight:800,color:"#111",marginBottom:14}},"Distribución por Nivel"),
+        Object.entries(stats.niveles).map(([niv,cant])=>
+          React.createElement("div",{key:niv,style:{display:"flex",alignItems:"center",gap:10,marginBottom:10}},
+            React.createElement("div",{style:{width:80,fontSize:12,fontWeight:700,color:NIVEL_C[niv]}},`${NIVEL_E[niv]} ${niv}`),
+            React.createElement("div",{style:{flex:1,background:"#f3f4f6",borderRadius:20,height:8,overflow:"hidden"}},
+              React.createElement("div",{style:{height:"100%",width:`${stats.totalClientes>0?cant/stats.totalClientes*100:0}%`,background:NIVEL_C[niv],borderRadius:20}})
+            ),
+            React.createElement("div",{style:{width:28,fontSize:12,fontWeight:800,color:NIVEL_C[niv],textAlign:"right"}},cant)
           )
-        ),
-        React.createElement("div", { style:{background:"#fff",borderRadius:18,padding:20,boxShadow:"0 2px 10px rgba(0,0,0,.06)"} },
-          React.createElement("div", { style:{fontSize:14,fontWeight:800,color:"#111",marginBottom:16} }, "Resumen de Operaciones"),
-          [
-            {l:"Ventas procesadas", v:stats.ventas, c:"#10b981"},
-            {l:"Canjes realizados", v:stats.canjes, c:"#8b5cf6"},
-            {l:"Clientes registrados", v:stats.registros, c:"#E30613"},
-            {l:"Pts totales emitidos", v:stats.ptsEmitidos.toLocaleString(), c:"#f59e0b"},
-          ].map(s => React.createElement("div", { key:s.l, style:{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:"1px solid #f3f4f6"} },
-            React.createElement("span", { style:{fontSize:13,color:"#555"} }, s.l),
-            React.createElement("span", { style:{fontSize:14,fontWeight:900,color:s.c} }, s.v)
-          ))
         )
       ),
-      // Últimos clientes registrados
-      React.createElement("div", { style:{background:"#fff",borderRadius:18,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.06)"} },
-        React.createElement("div", { style:{padding:"16px 20px",borderBottom:"1px solid #f3f4f6",fontSize:14,fontWeight:800,color:"#111"} }, "Últimos clientes registrados"),
-        clientes.map((c,i) => {
-          const niv = c.nivel||"Bronce";
-          return React.createElement("div", { key:i, style:{display:"flex",alignItems:"center",gap:14,padding:"11px 20px",borderBottom:"1px solid #f3f4f6"} },
-            React.createElement("div", { style:{width:36,height:36,borderRadius:10,background:NIVEL_BG[niv],display:"flex",alignItems:"center",justifyContent:"center",fontSize:18} }, NIVEL_EMOJI[niv]),
-            React.createElement("div", { style:{flex:1} },
-              React.createElement("div", { style:{fontSize:13,fontWeight:700,color:"#111"} }, `${c.nombre||""} ${c.apellido||""}`),
-              React.createElement("div", { style:{fontSize:11,color:"#aaa"} }, `DNI ${c.dni} · ${c.registrado||""} · ${c.canalOrigen||"Panel"}`)
-            ),
-            React.createElement("div", { style:{fontSize:14,fontWeight:900,color:NIVEL_COLORS[niv]} }, `${(c.puntos||0).toLocaleString()} pts`)
-          );
-        })
+      React.createElement("div",{style:{background:"#fff",borderRadius:16,padding:20,boxShadow:"0 2px 10px rgba(0,0,0,.06)"}},
+        React.createElement("div",{style:{fontSize:14,fontWeight:800,color:"#111",marginBottom:14}},"Resumen de Operaciones"),
+        [{l:"Ventas procesadas",v:stats.ventas,c:"#10b981"},
+         {l:"Canjes realizados",v:stats.canjes,c:"#8b5cf6"},
+         {l:"Registros nuevos",v:stats.registros,c:"#E30613"},
+         {l:"Puntos emitidos",v:stats.ptsEmitidos.toLocaleString(),c:"#f59e0b"},
+        ].map(s=>React.createElement("div",{key:s.l,style:{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:"1px solid #f3f4f6"}},
+          React.createElement("span",{style:{fontSize:13,color:"#555"}},s.l),
+          React.createElement("span",{style:{fontSize:14,fontWeight:900,color:s.c}},s.v)
+        ))
       )
+    ),
+
+    // ── EXPORTAR CLIENTES ──────────────────────────────────────────────────
+    React.createElement("div",{style:{background:"#fff",borderRadius:16,padding:20,boxShadow:"0 2px 10px rgba(0,0,0,.06)",marginBottom:16}},
+      React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}},
+        React.createElement("div",null,
+          React.createElement("div",{style:{fontSize:14,fontWeight:800,color:"#111"}},"👥 Exportar Clientes"),
+          React.createElement("div",{style:{fontSize:11,color:"#aaa",marginTop:2}},`${clientes.length} clientes en total`)
+        ),
+        BtnExport("clientes","Descargar CSV")
+      ),
+      React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10}},
+        React.createElement("label",{style:{fontSize:12,fontWeight:700,color:"#555"}},"Filtrar por sucursal:"),
+        React.createElement("select",{value:filtroCli,onChange:e=>setFiltroCli(e.target.value),style:SelectStyle},
+          sucursales.map(s=>React.createElement("option",{key:s.id,value:s.id},s.nombre))
+        ),
+        React.createElement("div",{style:{fontSize:12,color:"#aaa"}},
+          `→ ${filtroCli==="todas" ? clientes.length : clientes.filter(c=>(c.sucursalOrigen||"").toLowerCase().includes(sucursales.find(s=>s.id===filtroCli)?.nombre?.toLowerCase()||"")).length} registros`
+        )
+      )
+    ),
+
+    // ── EXPORTAR MOVIMIENTOS ───────────────────────────────────────────────
+    React.createElement("div",{style:{background:"#fff",borderRadius:16,padding:20,boxShadow:"0 2px 10px rgba(0,0,0,.06)",marginBottom:16}},
+      React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}},
+        React.createElement("div",null,
+          React.createElement("div",{style:{fontSize:14,fontWeight:800,color:"#111"}},"📋 Exportar Movimientos"),
+          React.createElement("div",{style:{fontSize:11,color:"#aaa",marginTop:2}},`${movimientos.length} movimientos en total`)
+        ),
+        BtnExport("movimientos","Descargar CSV")
+      ),
+      React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
+        React.createElement("label",{style:{fontSize:12,fontWeight:700,color:"#555"}},"Sucursal:"),
+        React.createElement("select",{value:filtroMov,onChange:e=>setFiltroMov(e.target.value),style:SelectStyle},
+          sucursales.map(s=>React.createElement("option",{key:s.id,value:s.id},s.nombre))
+        ),
+        React.createElement("label",{style:{fontSize:12,fontWeight:700,color:"#555",marginLeft:8}},"Fecha:"),
+        React.createElement("input",{type:"text",value:filtroFecha,onChange:e=>setFiltroFecha(e.target.value),
+          placeholder:"ej: 05/05/2026",
+          style:{...SelectStyle,width:130}
+        }),
+        filtroFecha && React.createElement("button",{onClick:()=>setFiltroFecha(""),style:{fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer"}},"✕ Limpiar"),
+        React.createElement("div",{style:{fontSize:12,color:"#aaa"}},
+          `→ ${(filtroMov==="todas"?movimientos:movimientos.filter(m=>m.sucursalId===filtroMov)).filter(m=>!filtroFecha||m.fecha===filtroFecha).length} registros`
+        )
+      )
+    ),
+
+    // ── PREVIEW ÚLTIMOS CLIENTES ───────────────────────────────────────────
+    React.createElement("div",{style:{background:"#fff",borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.06)"}},
+      React.createElement("div",{style:{padding:"14px 20px",borderBottom:"1px solid #f3f4f6",fontSize:14,fontWeight:800,color:"#111"}},"Últimos 10 clientes registrados"),
+      clientes.slice(0,10).map((c,i)=>React.createElement("div",{key:i,style:{display:"flex",alignItems:"center",gap:12,padding:"11px 20px",borderBottom:"1px solid #f3f4f6"}},
+        React.createElement("div",{style:{width:34,height:34,borderRadius:9,background:NIVEL_B[c.nivel||"Bronce"],display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}},NIVEL_E[c.nivel||"Bronce"]),
+        React.createElement("div",{style:{flex:1}},
+          React.createElement("div",{style:{fontSize:13,fontWeight:700,color:"#111"}},`${c.nombre||""} ${c.apellido||""}`),
+          React.createElement("div",{style:{fontSize:11,color:"#aaa"}},`DNI ${c.dni} · ${c.registrado||""} · ${c.sucursalOrigen||c.canalOrigen||"—"}`)
+        ),
+        React.createElement("div",{style:{fontSize:13,fontWeight:900,color:NIVEL_C[c.nivel||"Bronce"]}},`${(c.puntos||0).toLocaleString()} pts`)
+      ))
     )
   );
 };
 
-// ── PANEL SUCURSALES ────────────────────────────────────────────────────────
-const PanelSucursales = ({ showToast }) => {
-  const [sucursales, setSucursales] = React.useState([]);
+// ── ADMIN SUCURSALES ───────────────────────────────────────────────────────
+const AdminSucursales = ({ showToast }) => {
+  const [lista, setLista] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [editando, setEditando] = React.useState(null);
   const [form, setForm] = React.useState({});
   const [saving, setSaving] = React.useState(false);
 
-  const FIREBASE_API_KEY = "AIzaSyDvd7wUTP5Ew9BB5oHAUL_lvGHdmPv0or8";
-  const BASE = "https://firestore.googleapis.com/v1/projects/sumaprix/databases/(default)/documents";
-
   const cargar = async () => {
     setLoading(true);
-    const res  = await fetch(`${BASE}/sucursales?key=${FIREBASE_API_KEY}`);
-    const data = await res.json();
-    if (data.documents) {
-      setSucursales(data.documents.map(doc => {
-        const f = doc.fields||{};
-        const arr = v => v && v.arrayValue && v.arrayValue.values ? v.arrayValue.values.map(x=>x.stringValue||"") : [];
-        return {
-          _id:     doc.name.split("/").pop(),
-          id:      f.id?.stringValue||"",
-          nombre:  f.nombre?.stringValue||"",
-          zona:    f.zona?.stringValue||"",
-          pin:     f.pin?.stringValue||"",
-          cajeros: arr(f.cajeros),
-        };
-      }));
+    const docs = await fbList("sucursales");
+    if (docs.length > 0) {
+      setLista(docs);
     } else {
-      // Cargar desde fallback y guardar en Firebase
-      const defaults = [
-        {id:"san-isidro", nombre:"San Isidro", zona:"Norte", pin:"1234", cajeros:["Valentina","Rodrigo"]},
-        {id:"benavidez", nombre:"Benavidez", zona:"Norte", pin:"2345", cajeros:["Lucas","Fernanda"]},
-        {id:"talar", nombre:"Talar", zona:"Norte", pin:"3456", cajeros:["Mariano","Sofía"]},
-        {id:"martinez", nombre:"Martínez", zona:"Norte", pin:"4567", cajeros:["Diego","Paula"]},
-        {id:"san-fernando", nombre:"San Fernando", zona:"Norte", pin:"5678", cajeros:["Tomás","Belén"]},
-        {id:"moreno", nombre:"Moreno", zona:"Norte", pin:"6789", cajeros:["Carlos","Jimena"]},
-        {id:"canning", nombre:"Canning", zona:"Sur", pin:"7890", cajeros:["Roberto","Laura"]},
-        {id:"sgt-cabral", nombre:"Sgt. Cabral", zona:"Sur", pin:"8901", cajeros:["Nicolás","Ana"]},
-        {id:"petion", nombre:"Petión", zona:"Sur", pin:"9012", cajeros:["Gabriel","Micaela"]},
-      ];
-      setSucursales(defaults.map(s=>({...s,_id:s.id})));
+      setLista([
+        {_id:"san-isidro",   id:"san-isidro",   nombre:"San Isidro",   zona:"Norte", pin:"1234", cajeros:["Valentina","Rodrigo"]},
+        {_id:"benavidez",    id:"benavidez",    nombre:"Benavidez",    zona:"Norte", pin:"2345", cajeros:["Lucas","Fernanda"]},
+        {_id:"talar",        id:"talar",        nombre:"Talar",        zona:"Norte", pin:"3456", cajeros:["Mariano","Sofía"]},
+        {_id:"martinez",     id:"martinez",     nombre:"Martínez",     zona:"Norte", pin:"4567", cajeros:["Diego","Paula"]},
+        {_id:"san-fernando", id:"san-fernando", nombre:"San Fernando", zona:"Norte", pin:"5678", cajeros:["Tomás","Belén"]},
+        {_id:"moreno",       id:"moreno",       nombre:"Moreno",       zona:"Norte", pin:"6789", cajeros:["Carlos","Jimena"]},
+        {_id:"canning",      id:"canning",      nombre:"Canning",      zona:"Sur",   pin:"7890", cajeros:["Roberto","Laura"]},
+        {_id:"sgt-cabral",   id:"sgt-cabral",   nombre:"Sgt. Cabral",  zona:"Sur",   pin:"8901", cajeros:["Nicolás","Ana"]},
+        {_id:"petion",       id:"petion",       nombre:"Petión",       zona:"Sur",   pin:"9012", cajeros:["Gabriel","Micaela"]},
+      ]);
     }
     setLoading(false);
+    SUCURSALES_CACHE = null;
   };
 
   React.useEffect(()=>{ cargar(); },[]);
 
+  const iniciarNuevo = () => {
+    setForm({ _id:"", id:"", nombre:"", zona:"Norte", pin:"", cajeros:[], cajerosStr:"" });
+    setEditando("nuevo");
+  };
+
+  const iniciarEdicion = (s) => {
+    setForm({ ...s, cajerosStr: (s.cajeros||[]).join(", ") });
+    setEditando(s._id);
+  };
+
   const guardar = async () => {
+    if (!form.nombre || !form.pin) { showToast("⚠️ Completá nombre y PIN"); return; }
     setSaving(true);
-    const cajerosList = (form.cajerosStr||"").split(",").map(s=>s.trim()).filter(Boolean);
-    const fields = {
-      id:      { stringValue: form.id||form._id },
-      nombre:  { stringValue: form.nombre||"" },
-      zona:    { stringValue: form.zona||"" },
-      pin:     { stringValue: form.pin||"" },
-      cajeros: { arrayValue: { values: cajerosList.map(c=>({ stringValue:c })) } },
-    };
-    const docId = form._id || form.id;
-    await fetch(`${BASE}/sucursales/${docId}?key=${FIREBASE_API_KEY}`, {
-      method:"PATCH",
-      headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ fields })
-    });
-    SUCURSALES_CACHE = null; // limpiar caché
+    const cajeros = (form.cajerosStr||"").split(",").map(s=>s.trim()).filter(Boolean);
+    const docId = editando === "nuevo" ? (form.id || form.nombre.toLowerCase().replace(/\s+/g,"-").replace(/[^a-z0-9-]/g,"")) : form._id;
+    const data = { id:docId, nombre:form.nombre, zona:form.zona||"Norte", pin:form.pin, cajeros };
+    await fbSet("sucursales", docId, data);
+    SUCURSALES_CACHE = null;
     setSaving(false);
     setEditando(null);
     cargar();
-    showToast(`✅ ${form.nombre} actualizada`);
+    showToast(`✅ ${form.nombre} guardada`);
   };
 
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
-  return React.createElement("div", { style:{maxWidth:800} },
-    React.createElement("div", { style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:24} },
-      React.createElement("div", null,
-        React.createElement("div", { style:{fontSize:22,fontWeight:900,color:"#111"} }, "🏪 Gestión de Sucursales"),
-        React.createElement("div", { style:{fontSize:13,color:"#888"} }, "Editá PINs y cajeros de cada local")
-      )
+  return React.createElement("div", null,
+    React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}},
+      React.createElement("div",null,
+        React.createElement("div",{style:{fontSize:18,fontWeight:900,color:"#111"}},"🏪 Sucursales"),
+        React.createElement("div",{style:{fontSize:13,color:"#888"}},"Editá PINs, cajeros y agregá locales nuevos")
+      ),
+      !editando && React.createElement("button",{
+        onClick:iniciarNuevo,
+        style:{padding:"10px 18px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#E30613,#c0000f)",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",boxShadow:"0 4px 14px rgba(227,6,19,.25)"}
+      },"+ Nueva sucursal")
     ),
-    editando && React.createElement("div", { style:{background:"#fff",borderRadius:20,padding:24,boxShadow:"0 4px 16px rgba(0,0,0,.08)",marginBottom:20,border:"2px solid rgba(227,6,19,.15)"} },
-      React.createElement("div", { style:{fontSize:15,fontWeight:800,color:"#111",marginBottom:18} }, `✏️ Editando: ${form.nombre}`),
-      React.createElement("div", { style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:16} },
-        [
-          ["Nombre del local","nombre","San Isidro"],
-          ["Zona","zona","Norte / Sur"],
-          ["PIN de acceso","pin","1234"],
-        ].map(([label,k,ph]) => React.createElement("div", { key:k },
-          React.createElement("label", { style:{fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:5} }, label),
-          React.createElement("input", { value:form[k]||"", onChange:e=>set(k,e.target.value), placeholder:ph,
-            style:{width:"100%",padding:"10px 14px",borderRadius:11,border:"2px solid #e5e7eb",fontSize:14,fontWeight:600,outline:"none",color:"#111"} })
+
+    editando && React.createElement("div",{style:{background:"#fff",borderRadius:18,padding:22,boxShadow:"0 4px 16px rgba(0,0,0,.08)",marginBottom:20,border:"2px solid rgba(227,6,19,.15)"}},
+      React.createElement("div",{style:{fontSize:15,fontWeight:800,color:"#111",marginBottom:16}}, editando==="nuevo"?"➕ Nueva sucursal":"✏️ Editar sucursal"),
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:16}},
+        [["Nombre del local *","nombre","San Isidro"],
+         ["PIN de acceso *","pin","1234"],
+         ["Zona","zona","Norte / Sur"],
+         ["ID (sin espacios)","id","san-isidro"],
+        ].map(([label,k,ph])=>React.createElement("div",{key:k},
+          React.createElement("label",{style:{fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:5}},label),
+          React.createElement("input",{value:form[k]||"",onChange:e=>set(k,e.target.value),placeholder:ph,
+            style:{width:"100%",padding:"10px 14px",borderRadius:11,border:"2px solid #e5e7eb",fontSize:14,fontWeight:600,outline:"none",color:"#111"}})
         )),
-        React.createElement("div", null,
-          React.createElement("label", { style:{fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:5} }, "Cajeros (separados por coma)"),
-          React.createElement("input", { value:form.cajerosStr||"", onChange:e=>set("cajerosStr",e.target.value), placeholder:"Ana, Juan, María",
-            style:{width:"100%",padding:"10px 14px",borderRadius:11,border:"2px solid #e5e7eb",fontSize:14,fontWeight:600,outline:"none",color:"#111"} })
+        React.createElement("div",{style:{gridColumn:"1/-1"}},
+          React.createElement("label",{style:{fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:5}},"Cajeros (separados por coma)"),
+          React.createElement("input",{value:form.cajerosStr||"",onChange:e=>set("cajerosStr",e.target.value),placeholder:"Ana, Juan, María",
+            style:{width:"100%",padding:"10px 14px",borderRadius:11,border:"2px solid #e5e7eb",fontSize:14,fontWeight:600,outline:"none",color:"#111"}})
         )
       ),
-      React.createElement("div", { style:{display:"flex",gap:10} },
-        React.createElement("button", { onClick:()=>setEditando(null), style:{flex:1,padding:"11px",borderRadius:11,border:"1px solid #e5e7eb",background:"#fff",color:"#555",fontWeight:700,fontSize:13,cursor:"pointer"} }, "Cancelar"),
-        React.createElement("button", { onClick:guardar, disabled:saving, style:{flex:2,padding:"11px",borderRadius:11,border:"none",background:"linear-gradient(135deg,#E30613,#c0000f)",color:"#fff",fontWeight:800,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,cursor:"pointer"} },
-          saving ? React.createElement(React.Fragment, null, React.createElement(Spinner,{size:16,color:"#fff"}), " Guardando...") : "Guardar en Firebase ✓"
+      React.createElement("div",{style:{display:"flex",gap:10}},
+        React.createElement("button",{onClick:()=>setEditando(null),style:{flex:1,padding:"11px",borderRadius:11,border:"1px solid #e5e7eb",background:"#fff",color:"#555",fontWeight:700,fontSize:13,cursor:"pointer"}},"Cancelar"),
+        React.createElement("button",{onClick:guardar,disabled:saving,style:{flex:2,padding:"11px",borderRadius:11,border:"none",background:"linear-gradient(135deg,#E30613,#c0000f)",color:"#fff",fontWeight:800,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,cursor:"pointer"}},
+          saving ? React.createElement(React.Fragment,null,React.createElement(Spinner,{size:16,color:"#fff"})," Guardando...") : "Guardar en Firebase ✓"
         )
       )
     ),
-    loading ? React.createElement("div", { style:{padding:40,textAlign:"center",display:"flex",justifyContent:"center"} }, React.createElement(Spinner,{size:32}))
-    : React.createElement("div", { style:{background:"#fff",borderRadius:18,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.06)"} },
-      sucursales.map((s,i) => React.createElement("div", { key:s._id, style:{display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderBottom:i<sucursales.length-1?"1px solid #f3f4f6":"none"} },
-        React.createElement("div", { style:{flex:1} },
-          React.createElement("div", { style:{fontSize:14,fontWeight:800,color:"#111"} }, s.nombre),
-          React.createElement("div", { style:{fontSize:11,color:"#aaa",marginTop:2} }, `Zona ${s.zona} · Cajeros: ${(s.cajeros||[]).join(", ")||"—"}`)
+
+    loading ? React.createElement("div",{style:{padding:40,textAlign:"center",display:"flex",justifyContent:"center"}},React.createElement(Spinner,{size:32}))
+    : React.createElement("div",{style:{background:"#fff",borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.06)"}},
+      lista.length===0 && React.createElement("div",{style:{padding:32,textAlign:"center",color:"#ccc",fontSize:13}},"Sin sucursales cargadas"),
+      lista.map((s,i)=>React.createElement("div",{key:s._id,style:{display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderBottom:i<lista.length-1?"1px solid #f3f4f6":"none"}},
+        React.createElement("div",{style:{flex:1}},
+          React.createElement("div",{style:{fontSize:14,fontWeight:800,color:"#111"}},s.nombre),
+          React.createElement("div",{style:{fontSize:11,color:"#aaa",marginTop:2}},`Zona ${s.zona||"—"} · Cajeros: ${(s.cajeros||[]).join(", ")||"—"}`)
         ),
-        React.createElement("div", { style:{background:"#f9fafb",borderRadius:10,padding:"6px 14px",marginRight:10} },
-          React.createElement("div", { style:{fontSize:11,color:"#aaa",textAlign:"center"} }, "PIN"),
-          React.createElement("div", { style:{fontSize:16,fontWeight:900,color:"#111",letterSpacing:2} }, s.pin||"—")
+        React.createElement("div",{style:{background:"#f9fafb",borderRadius:10,padding:"6px 16px",marginRight:8,textAlign:"center"}},
+          React.createElement("div",{style:{fontSize:10,color:"#aaa"}},s._id),
+          React.createElement("div",{style:{fontSize:16,fontWeight:900,color:"#111",letterSpacing:3}},s.pin||"—")
         ),
-        React.createElement("button", {
-          onClick:()=>{ setForm({...s, cajerosStr:(s.cajeros||[]).join(", ")}); setEditando(s._id); },
+        React.createElement("button",{
+          onClick:()=>iniciarEdicion(s),
           style:{padding:"7px 14px",borderRadius:10,border:"1px solid #e5e7eb",background:"#fff",color:"#555",fontWeight:700,fontSize:12,cursor:"pointer"}
-        }, "✏️ Editar")
+        },"✏️ Editar")
+      ))
+    )
+  );
+};
+
+// ── ADMIN CATALOGO ─────────────────────────────────────────────────────────
+const AdminCatalogo = ({ showToast }) => {
+  const [premios, setPremios] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [editando, setEditando] = React.useState(null);
+  const [form, setForm] = React.useState({ nombre:"", pts:"", emoji:"🎁", stock:"10", activo:true });
+  const [saving, setSaving] = React.useState(false);
+
+  const EMOJIS = ["🥤","💧","🍺","🧃","🍟","🫙","🍕","🍫","☕","🧁","🎁","🛍️","🏆","⭐","🎯","🍬","🧀","🥪","🍪","🥛"];
+
+  const cargar = async () => {
+    setLoading(true);
+    const docs = await fbList("premios");
+    setPremios(docs.sort((a,b)=>(a.pts||0)-(b.pts||0)));
+    setLoading(false);
+    SUCURSALES_CACHE = null;
+  };
+
+  React.useEffect(()=>{ cargar(); },[]);
+
+  const iniciarNuevo = () => {
+    setForm({ nombre:"", pts:"", emoji:"🎁", stock:"10", activo:true });
+    setEditando("nuevo");
+  };
+
+  const iniciarEdicion = (p) => {
+    setForm({ nombre:p.nombre||"", pts:String(p.pts||""), emoji:p.emoji||"🎁", stock:String(p.stock||10), activo:p.activo!==false });
+    setEditando(p._id);
+  };
+
+  const guardar = async () => {
+    if (!form.nombre || !form.pts) { showToast("⚠️ Completá nombre y puntos"); return; }
+    setSaving(true);
+    const data = { nombre:form.nombre.trim(), pts:Number(form.pts), emoji:form.emoji, stock:Number(form.stock||0), activo:form.activo };
+    if (editando === "nuevo") await fbAdd("premios", data);
+    else await fbSet("premios", editando, data);
+    setSaving(false);
+    setEditando(null);
+    cargar();
+    showToast(`✅ Premio "${data.nombre}" guardado`);
+  };
+
+  const toggleActivo = async (p) => {
+    await fbSet("premios", p._id, { activo: !p.activo });
+    showToast(p.activo ? `⏸️ "${p.nombre}" desactivado` : `▶️ "${p.nombre}" activado`);
+    cargar();
+  };
+
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  return React.createElement("div", null,
+    React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}},
+      React.createElement("div",null,
+        React.createElement("div",{style:{fontSize:18,fontWeight:900,color:"#111"}},"🏷️ Catálogo de Premios"),
+        React.createElement("div",{style:{fontSize:13,color:"#888"}},"Administrá los premios disponibles para canje")
+      ),
+      !editando && React.createElement("button",{
+        onClick:iniciarNuevo,
+        style:{padding:"10px 18px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#E30613,#c0000f)",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",boxShadow:"0 4px 14px rgba(227,6,19,.25)"}
+      },"+ Nuevo premio")
+    ),
+
+    editando && React.createElement("div",{style:{background:"#fff",borderRadius:18,padding:22,boxShadow:"0 4px 16px rgba(0,0,0,.08)",marginBottom:20,border:"2px solid rgba(227,6,19,.15)"}},
+      React.createElement("div",{style:{fontSize:15,fontWeight:800,color:"#111",marginBottom:16}}, editando==="nuevo"?"➕ Nuevo premio":"✏️ Editar premio"),
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:16}},
+        [["Nombre del premio *","nombre","Gaseosa 2.25L"],
+         ["Puntos requeridos *","pts","500"],
+         ["Stock disponible","stock","10"],
+        ].map(([label,k,ph])=>React.createElement("div",{key:k},
+          React.createElement("label",{style:{fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:5}},label),
+          React.createElement("input",{value:form[k]||"",onChange:e=>set(k,e.target.value),placeholder:ph,
+            inputMode:k!=="nombre"?"numeric":"text",
+            style:{width:"100%",padding:"10px 14px",borderRadius:11,border:"2px solid #e5e7eb",fontSize:14,fontWeight:600,outline:"none",color:"#111"}})
+        )),
+        React.createElement("div",null,
+          React.createElement("label",{style:{fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:5}},"Emoji"),
+          React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:5}},
+            EMOJIS.map(e=>React.createElement("button",{key:e,onClick:()=>set("emoji",e),
+              style:{width:34,height:34,borderRadius:8,border:`2px solid ${form.emoji===e?"#E30613":"#e5e7eb"}`,background:form.emoji===e?"#fff5f5":"#fafafa",fontSize:17,cursor:"pointer"}},e))
+          )
+        )
+      ),
+      React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:14,padding:"10px 14px",background:"#f9fafb",borderRadius:10}},
+        React.createElement("span",{style:{fontSize:13,fontWeight:600,color:"#555"}},"Estado:"),
+        React.createElement("button",{onClick:()=>set("activo",!form.activo),
+          style:{padding:"5px 14px",borderRadius:20,border:"none",background:form.activo?"#dcfce7":"#fee2e2",color:form.activo?"#15803d":"#dc2626",fontWeight:700,fontSize:12,cursor:"pointer"}},
+          form.activo?"✅ Activo":"⏸️ Inactivo"
+        )
+      ),
+      React.createElement("div",{style:{display:"flex",gap:10}},
+        React.createElement("button",{onClick:()=>setEditando(null),style:{flex:1,padding:"11px",borderRadius:11,border:"1px solid #e5e7eb",background:"#fff",color:"#555",fontWeight:700,fontSize:13,cursor:"pointer"}},"Cancelar"),
+        React.createElement("button",{onClick:guardar,disabled:saving,style:{flex:2,padding:"11px",borderRadius:11,border:"none",background:"linear-gradient(135deg,#E30613,#c0000f)",color:"#fff",fontWeight:800,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,cursor:"pointer"}},
+          saving?React.createElement(React.Fragment,null,React.createElement(Spinner,{size:16,color:"#fff"})," Guardando..."):"Guardar en Firebase ✓"
+        )
+      )
+    ),
+
+    loading ? React.createElement("div",{style:{padding:40,textAlign:"center",display:"flex",justifyContent:"center"}},React.createElement(Spinner,{size:32}))
+    : React.createElement("div",{style:{background:"#fff",borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.06)"}},
+      premios.length===0 && React.createElement("div",{style:{padding:32,textAlign:"center",color:"#ccc",fontSize:13}},"Sin premios cargados. Clickeá '+ Nuevo premio' para agregar."),
+      premios.map((p,i)=>React.createElement("div",{key:p._id,style:{display:"flex",alignItems:"center",gap:14,padding:"13px 18px",borderBottom:i<premios.length-1?"1px solid #f3f4f6":"none",opacity:p.activo===false?0.5:1}},
+        React.createElement("div",{style:{width:40,height:40,borderRadius:10,background:"#f9fafb",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}},p.emoji||"🎁"),
+        React.createElement("div",{style:{flex:1}},
+          React.createElement("div",{style:{fontSize:14,fontWeight:800,color:"#111"}},p.nombre),
+          React.createElement("div",{style:{fontSize:11,color:"#aaa",marginTop:2}},`Stock: ${p.stock||0} unid. · ${p.activo===false?"Inactivo":"Activo"}`)
+        ),
+        React.createElement("div",{style:{fontSize:16,fontWeight:900,color:"#E30613",minWidth:70,textAlign:"center"}},`${(p.pts||0)} pts`),
+        React.createElement("div",{style:{display:"flex",gap:8}},
+          React.createElement("button",{onClick:()=>iniciarEdicion(p),style:{padding:"6px 12px",borderRadius:8,border:"1px solid #e5e7eb",background:"#fff",color:"#555",fontWeight:700,fontSize:12,cursor:"pointer"}},"✏️"),
+          React.createElement("button",{onClick:()=>toggleActivo(p),style:{padding:"6px 12px",borderRadius:8,border:"none",background:p.activo===false?"#dcfce7":"#fee2e2",color:p.activo===false?"#15803d":"#dc2626",fontWeight:700,fontSize:12,cursor:"pointer"}},
+            p.activo===false?"▶️":"⏸️"
+          )
+        )
       ))
     )
   );
