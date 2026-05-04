@@ -348,10 +348,10 @@ const LoginScreen = ({
     }
   }, /*#__PURE__*/React.createElement("option", {
     value: ""
-  }, "\u2014 Seleccion\xE1 tu sucursal \u2014"), ["Norte", "Sur"].map(zona => /*#__PURE__*/React.createElement("optgroup", {
+  }, sucursales.length === 0 ? "Cargando sucursales..." : "\u2014 Seleccion\xE1 tu sucursal \u2014"), ["Norte", "Sur"].map(zona => /*#__PURE__*/React.createElement("optgroup", {
     key: zona,
     label: `Zona ${zona}`
-  }, SUCURSALES.filter(s => s.zona === zona).map(s => /*#__PURE__*/React.createElement("option", {
+  }, sucursales.filter(s => s.zona === zona).map(s => /*#__PURE__*/React.createElement("option", {
     key: s.id,
     value: s.id
   }, s.nombre)))))), /*#__PURE__*/React.createElement("div", {
