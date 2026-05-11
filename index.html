@@ -229,9 +229,9 @@ const LoginScreen = ({
     }
     if (!suc) { setErr("Seleccioná una sucursal"); return; }
     if (pin !== suc.pin) { setErr("PIN incorrecto"); setPin(""); return; }
-    if (!cajero) { setErr("Seleccioná tu nombre"); return; }
+    // cajero no requerido en login
     setLoading(true);
-    setTimeout(() => onLogin({ sucursal: suc, cajero, esAdmin: false }), 600);
+    setTimeout(() => onLogin({ sucursal: suc, cajero: "", esAdmin: false }), 600);
   };
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -381,44 +381,7 @@ const LoginScreen = ({
       outline: "none",
       textAlign: "center"
     }
-  })), suc && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 20,
-      animation: "fadeIn .2s ease"
-    }
-  }, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 11,
-      fontWeight: 700,
-      color: "#555",
-      textTransform: "uppercase",
-      letterSpacing: .5,
-      display: "block",
-      marginBottom: 6
-    }
-  }, "Tu nombre"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 8
-    }
-  }, suc.cajeros.map(c => /*#__PURE__*/React.createElement("button", {
-    key: c,
-    onClick: () => {
-      setCajero(c);
-      setErr("");
-    },
-    style: {
-      flex: 1,
-      padding: "11px",
-      borderRadius: 12,
-      border: `2px solid ${cajero === c ? "#E30613" : "#e5e7eb"}`,
-      background: cajero === c ? "#fff5f5" : "#fafafa",
-      color: cajero === c ? "#E30613" : "#555",
-      fontWeight: 700,
-      fontSize: 14,
-      transition: "all .2s"
-    }
-  }, c)))), err && /*#__PURE__*/React.createElement("div", {
+  })),  err && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12,
       color: "#ef4444",
