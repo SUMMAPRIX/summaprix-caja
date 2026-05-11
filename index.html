@@ -316,7 +316,7 @@ const LoginScreen = ({
       fontSize: 11,
       color: "rgba(255,255,255,.6)"
     }
-  }, "Panel de Caja \xB7 BonPrix")))), /*#__PURE__*/React.createElement("div", {
+  }, "Panel de Caja \xB7 Bonprix")))), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "#fff",
       borderRadius: 24,
@@ -3137,41 +3137,90 @@ const AdminDashboard = ({ showToast }) => {
     }).catch(()=>setLoading(false));
   }, []);
 
-  const descargarCSV = (tipo) => {
+  const descargarXLS = (tipo) => {
     setExportando(true);
-    let rows = [], header = "", filename = "";
-    const hoy = new Date().toLocaleDateString("es-AR").replace(/\//g,"-");
+    const hoyStr = new Date().toLocaleDateString("es-AR").replace(/\/g,"-");
+    const fechaLabel = new Date().toLocaleDateString("es-AR",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+
+    let titulo = "", cols = [], filas = [], totales = [], filename = "";
+    const ROJO = "#E30613", ROJO_LIGHT = "#fff5f5";
+    const sucNombre = sucursales.find(s=>s.id===(tipo==="clientes"?filtroCli:filtroMov))?.nombre || "Todas las sucursales";
 
     if (tipo === "clientes") {
-      const filtrados = filtroCli === "todas" ? clientes : clientes.filter(c => (c.sucursalOrigen||"").toLowerCase().includes(sucursales.find(s=>s.id===filtroCli)?.nombre?.toLowerCase()||""));
-      header = "DNI,Nombre,Apellido,Nivel,Puntos,Cashback,Compras,Nacimiento,Telefono,Email,Registrado,Sucursal Origen,Canal";
-      rows = filtrados.map(c => [
-        c.dni||"", c.nombre||"", c.apellido||"", c.nivel||"", c.puntos||0,
-        ((c.puntos||0)*0.05).toFixed(2), c.compras||0, c.nacimiento||"",
-        c.tel||"", c.email||"", c.registrado||"", c.sucursalOrigen||"", c.canalOrigen||"Panel"
-      ].join(","));
-      filename = `clientes_${filtroCli}_${hoy}.csv`;
+      const filtrados = filtroCli==="todas" ? clientes : clientes.filter(c=>(c.sucursalOrigen||"").toLowerCase().includes((sucursales.find(s=>s.id===filtroCli)?.nombre||"").toLowerCase()));
+      titulo = `Listado de Clientes SUMAPRIX — ${sucNombre}`;
+      cols   = ["DNI","Nombre","Apellido","Nivel","Puntos","Cashback $","Compras","Nacimiento","Teléfono","Email","Registrado","Sucursal","Canal"];
+      filas  = filtrados.map(c=>[
+        c.dni||"", c.nombre||"", c.apellido||"", c.nivel||"Bronce",
+        c.puntos||0, ((c.puntos||0)*1).toFixed(2), c.compras||0,
+        c.nacimiento||"", c.tel||"", c.email||"",
+        c.registrado||"", c.sucursalOrigen||"", c.canalOrigen||"Panel"
+      ]);
+      const totalPts = filtrados.reduce((a,c)=>a+(c.puntos||0),0);
+      totales = ["","","","TOTALES",totalPts.toLocaleString(),`$${totalPts.toLocaleString()}`,filtrados.reduce((a,c)=>a+(c.compras||0),0),"","","","","",""];
+      filename = `clientes_${filtroCli}_${hoyStr}.xls`;
     } else {
       let filtrados = movimientos;
-      if (filtroMov !== "todas") filtrados = filtrados.filter(m=>m.sucursalId===filtroMov);
+      if (filtroMov!=="todas") filtrados = filtrados.filter(m=>m.sucursalId===filtroMov);
       if (filtroFecha) filtrados = filtrados.filter(m=>m.fecha===filtroFecha);
-      header = "Fecha,Hora,Tipo,Cliente,DNI,Monto,Puntos,Premio,Sucursal,Cajero";
-      rows = filtrados.map(m => [
-        m.fecha||"", m.hora||"", m.tipo||"", m.nombre||"", m.dni||"",
-        m.monto||"", m.pts||"", m.premio||"", m.sucursal||"", m.cajero||""
-      ].join(","));
-      filename = `movimientos_${filtroMov}_${filtroFecha||"todos"}${hoy}.csv`;
+      titulo = `Movimientos SUMAPRIX — ${sucNombre}${filtroFecha?" · "+filtroFecha:""}`;
+      cols   = ["Fecha","Hora","Tipo","Cliente","DNI","Monto $","Puntos","Premio","Sucursal","Cajero"];
+      filas  = filtrados.map(m=>[
+        m.fecha||"", m.hora||"",
+        m.tipo==="venta"?"💳 Venta":m.tipo==="canje"?"🎁 Canje":"➕ Registro",
+        m.nombre||"", m.dni||"",
+        m.monto?`$${Number(m.monto).toLocaleString()}`:"—",
+        m.pts||"", m.premio||"—", m.sucursal||"", m.cajero||""
+      ]);
+      const totalMonto = filtrados.filter(f=>f.tipo==="venta").reduce((a,m)=>a+(Number(m.monto)||0),0);
+      const totalPts   = filtrados.filter(f=>f.tipo==="venta").reduce((a,m)=>a+(m.pts||0),0);
+      totales = ["","","TOTALES","",`${filtrados.length} movs`,`$${totalMonto.toLocaleString()}`,totalPts.toLocaleString(),"","",""];
+      filename = `movimientos_${filtroMov}_${filtroFecha||"todos"}_${hoyStr}.xls`;
     }
 
-    const csv = [header, ...rows].join("\n");
-    const blob = new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"});
+    // Build styled HTML table
+    const cellStyle = "border:1px solid #e5e7eb;padding:8px 12px;font-size:12px;font-family:Arial,sans-serif;";
+    const headStyle = `${cellStyle}background:${ROJO};color:#fff;font-weight:700;text-align:center;white-space:nowrap;`;
+    const totalStyle = `${cellStyle}background:#111;color:#fff;font-weight:800;`;
+    const altStyle  = `${cellStyle}background:#fff5f5;`;
+    const normStyle = `${cellStyle}background:#fff;`;
+
+    const headerRow = cols.map(c=>`<th style="${headStyle}">${c}</th>`).join("");
+    const dataRows  = filas.map((row,i)=>
+      "<tr>"+row.map(cell=>`<td style="${i%2===0?normStyle:altStyle}">${cell}</td>`).join("")+"</tr>"
+    ).join("");
+    const totalRow  = totales.length ? "<tr>"+totales.map(t=>`<td style="${totalStyle}">${t}</td>`).join("")+"</tr>" : "";
+
+    const html = `
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><style>
+  body{font-family:Arial,sans-serif;}
+  table{border-collapse:collapse;width:100%;}
+</style></head>
+<body>
+<table>
+  <tr><td colspan="${cols.length}" style="background:${ROJO};color:#fff;font-size:16px;font-weight:900;padding:14px 16px;font-family:Arial;">⭐ SUMAPRIX · Bonprix</td></tr>
+  <tr><td colspan="${cols.length}" style="background:#111;color:#fff;font-size:13px;padding:8px 16px;font-family:Arial;">${titulo}</td></tr>
+  <tr><td colspan="${cols.length}" style="background:#f9fafb;color:#888;font-size:11px;padding:6px 16px;font-family:Arial;">Generado: ${fechaLabel} · ${filas.length} registros</td></tr>
+  <tr><td colspan="${cols.length}" style="padding:4px;"></td></tr>
+  <tr>${headerRow}</tr>
+  ${dataRows}
+  ${totalRow}
+  <tr><td colspan="${cols.length}" style="padding:8px;"></td></tr>
+  <tr><td colspan="${cols.length}" style="color:#aaa;font-size:10px;padding:6px 16px;font-family:Arial;">© Bonprix · Programa de Fidelización SUMAPRIX</td></tr>
+</table>
+</body></html>`;
+
+    const blob = new Blob([html], {type:"application/vnd.ms-excel;charset=utf-8;"});
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href = url; a.download = filename; a.click();
     URL.revokeObjectURL(url);
     setExportando(false);
-    showToast(`✅ ${rows.length} registros exportados`);
+    showToast(`✅ ${filas.length} registros exportados como Excel`);
   };
+
+
 
   const NIVEL_C = { Bronce:"#b45309", Silver:"#475569", Gold:"#d97706", Platinum:"#6d28d9" };
   const NIVEL_B = { Bronce:"#fef3c7", Silver:"#f1f5f9", Gold:"#fffbeb", Platinum:"#ede9fe" };
@@ -3184,13 +3233,13 @@ const AdminDashboard = ({ showToast }) => {
 
   const SelectStyle = { padding:"8px 12px", borderRadius:10, border:"2px solid #e5e7eb", fontSize:13, fontWeight:600, color:"#111", background:"#fff", outline:"none", cursor:"pointer" };
   const BtnExport = (tipo, label) => React.createElement("button", {
-    onClick:()=>descargarCSV(tipo), disabled:exportando,
+    onClick:()=>descargarXLS(tipo), disabled:exportando,
     style:{padding:"9px 16px",borderRadius:10,border:"none",background:"#111",color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:6}
   }, exportando ? React.createElement(React.Fragment,null,React.createElement(Spinner,{size:14,color:"#fff"})," Exportando...") : `⬇️ ${label}`);
 
   return React.createElement("div", null,
     React.createElement("div",{style:{fontSize:20,fontWeight:900,color:"#111",marginBottom:4}},"👑 Dashboard General"),
-    React.createElement("div",{style:{fontSize:13,color:"#888",marginBottom:20}},"Vista consolidada · BonPrix"),
+    React.createElement("div",{style:{fontSize:13,color:"#888",marginBottom:20}},"Vista consolidada · Bonprix"),
 
     // KPIs
     React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}},
@@ -3239,7 +3288,7 @@ const AdminDashboard = ({ showToast }) => {
           React.createElement("div",{style:{fontSize:14,fontWeight:800,color:"#111"}},"👥 Exportar Clientes"),
           React.createElement("div",{style:{fontSize:11,color:"#aaa",marginTop:2}},`${clientes.length} clientes en total`)
         ),
-        BtnExport("clientes","Descargar CSV")
+        BtnExport("clientes","Descargar Excel")
       ),
       React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10}},
         React.createElement("label",{style:{fontSize:12,fontWeight:700,color:"#555"}},"Filtrar por sucursal:"),
@@ -3259,7 +3308,7 @@ const AdminDashboard = ({ showToast }) => {
           React.createElement("div",{style:{fontSize:14,fontWeight:800,color:"#111"}},"📋 Exportar Movimientos"),
           React.createElement("div",{style:{fontSize:11,color:"#aaa",marginTop:2}},`${movimientos.length} movimientos en total`)
         ),
-        BtnExport("movimientos","Descargar CSV")
+        BtnExport("movimientos","Descargar Excel")
       ),
       React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
         React.createElement("label",{style:{fontSize:12,fontWeight:700,color:"#555"}},"Sucursal:"),
@@ -3541,7 +3590,7 @@ const AdminConfig = ({ showToast }) => {
     horasEsperaCashback: 24,
     valorPunto: 1,
     puntosMinimoCanje: 0,
-    descripcionCashback: "Tu cashback estará disponible a partir de mañana en cualquier BonPrix",
+    descripcionCashback: "Tu cashback estará disponible a partir de mañana en cualquier Bonprix",
   });
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving]   = React.useState(false);
