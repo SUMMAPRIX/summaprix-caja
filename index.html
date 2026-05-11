@@ -6,8 +6,6 @@
   <title>SUMAPRIX · Panel de Caja</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800;900&display=swap');
     * { box-sizing:border-box; margin:0; padding:0; }
@@ -34,25 +32,25 @@
       messagingSenderId: "1018428764358",
       appId: "1:1018428764358:web:9a15a7b234f637ff6627c7"
     };
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
+    // Firebase REST API - no SDK needed
 
     // Cargar config del programa al inicio
     window._SUMAPRIX_CONFIG = { porcentajeAcumulacion:3, horasEsperaCashback:24, valorPunto:1, puntosMinimoCanje:0 };
-    fetch("https://firestore.googleapis.com/v1/projects/sumaprix/databases/(default)/documents/config/programa?key=AIzaSyDvd7wUTP5Ew9BB5oHAUL_lvGHdmPv0or8")
-      .then(r=>r.json()).then(d=>{
-        if (d.fields) {
-          const f = d.fields;
-          window._SUMAPRIX_CONFIG = {
-            porcentajeAcumulacion: f.porcentajeAcumulacion?.doubleValue || 3,
-            horasEsperaCashback:   Number(f.horasEsperaCashback?.integerValue || 24),
-            valorPunto:            f.valorPunto?.doubleValue || 1,
-            puntosMinimoCanje:     Number(f.puntosMinimoCanje?.integerValue || 0),
-            descripcionCashback:   f.descripcionCashback?.stringValue || "",
-          };
-          console.log("SUMAPRIX Config cargada:", window._SUMAPRIX_CONFIG);
-        }
-      }).catch(()=>{});
+    window.addEventListener("DOMContentLoaded", function() {
+      fetch("https://firestore.googleapis.com/v1/projects/sumaprix/databases/(default)/documents/config/programa?key=AIzaSyDvd7wUTP5Ew9BB5oHAUL_lvGHdmPv0or8")
+        .then(r=>r.json()).then(d=>{
+          if (d.fields) {
+            const f = d.fields;
+            window._SUMAPRIX_CONFIG = {
+              porcentajeAcumulacion: f.porcentajeAcumulacion?.doubleValue || 3,
+              horasEsperaCashback:   Number(f.horasEsperaCashback?.integerValue || 24),
+              valorPunto:            f.valorPunto?.doubleValue || 1,
+              puntosMinimoCanje:     Number(f.puntosMinimoCanje?.integerValue || 0),
+              descripcionCashback:   f.descripcionCashback?.stringValue || "",
+            };
+          }
+        }).catch(()=>{});
+    });
   </script>
   <script>
 const {
@@ -156,20 +154,10 @@ const PREMIOS_DEFAULT = [{
   activo: true
 }];
 const getPremios = async () => {
-  const snap = await db.collection("premios").where("activo", "==", true).get();
-  if (snap.empty) return PREMIOS_DEFAULT;
-  return snap.docs.map(d => ({
-    id: d.id,
-    ...d.data()
-  }));
+  try { const docs = await fbList("premios"); const a=docs.filter(p=>p.activo!==false); return a.length>0?a:PREMIOS_DEFAULT; } catch(e){return PREMIOS_DEFAULT;}
 };
 const getAllPremios = async () => {
-  const snap = await db.collection("premios").get();
-  if (snap.empty) return PREMIOS_DEFAULT;
-  return snap.docs.map(d => ({
-    id: d.id,
-    ...d.data()
-  }));
+  try { const docs = await fbList("premios"); return docs.length>0?docs:PREMIOS_DEFAULT; } catch(e){return PREMIOS_DEFAULT;}
 };
 const NIVEL = {
   Bronce: {
@@ -201,32 +189,11 @@ const now = () => new Date().toLocaleTimeString("es-AR", {
 const hoy = () => new Date().toLocaleDateString("es-AR");
 
 // Firebase helpers
-const getCliente = async dni => {
-  const snap = await db.collection("clientes").doc(dni).get();
-  return snap.exists ? {
-    ...snap.data(),
-    dni
-  } : null;
-};
-const saveCliente = async c => {
-  await db.collection("clientes").doc(c.dni).set(c, {
-    merge: true
-  });
-};
-const logMovimiento = async mov => {
-  await db.collection("movimientos").add({
-    ...mov,
-    timestamp: firebase.firestore.FieldValue.serverTimestamp()
-  });
-};
+const getCliente = async dni => { try { return await fbGet("clientes", dni); } catch(e){return null;} };
+const saveCliente = async c => { await fbSet("clientes", c.dni, c); };
+const logMovimiento = async mov => { await fbAdd("movimientos", {...mov, fechaISO:new Date().toISOString()}); };
 const getMovimientosDia = async sucursalId => {
-  const snap = await db.collection("movimientos").where("sucursalId", "==", sucursalId).where("fecha", "==", hoy()).get();
-  const docs = snap.docs.map(d => ({
-    id: d.id,
-    ...d.data()
-  }));
-  // Sort by hora desc client-side
-  return docs.sort((a, b) => (b.hora || "").localeCompare(a.hora || ""));
+  try { const docs = await fbList("movimientos"); return docs.filter(d=>d.sucursalId===sucursalId&&d.fecha===hoy()).sort((a,b)=>(b.hora||"").localeCompare(a.hora||"")); } catch(e){return [];}
 };
 const Spinner = ({
   size = 24,
@@ -2328,12 +2295,10 @@ const PanelCatalogo = ({
       activo: form.activo
     };
     if (editando === "nuevo") {
-      await db.collection("premios").add(data);
+      await fbAdd("premios", data);
       showToast(`✅ Premio "${data.nombre}" agregado`);
     } else {
-      await db.collection("premios").doc(editando).set(data, {
-        merge: true
-      });
+      await fbSet("premios", editando, data);
       showToast(`✅ Premio "${data.nombre}" actualizado`);
     }
     setSaving(false);
@@ -2341,11 +2306,7 @@ const PanelCatalogo = ({
     cargar();
   };
   const toggleActivo = async p => {
-    await db.collection("premios").doc(p.id).set({
-      activo: !p.activo
-    }, {
-      merge: true
-    });
+    await fbSet("premios", p._id||p.id, { activo: !p.activo });
     showToast(p.activo ? `⏸️ "${p.nombre}" desactivado` : `▶️ "${p.nombre}" activado`);
     cargar();
   };
@@ -3139,7 +3100,7 @@ const AdminDashboard = ({ showToast }) => {
 
   const descargarXLS = (tipo) => {
     setExportando(true);
-    const hoyStr = new Date().toLocaleDateString("es-AR").replace(/\/g,"-");
+    const hoyStr = new Date().toLocaleDateString("es-AR").replace(/\//g,"-");
     const fechaLabel = new Date().toLocaleDateString("es-AR",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
 
     let titulo = "", cols = [], filas = [], totales = [], filename = "";
@@ -3178,38 +3139,42 @@ const AdminDashboard = ({ showToast }) => {
       filename = `movimientos_${filtroMov}_${filtroFecha||"todos"}_${hoyStr}.xls`;
     }
 
-    // Build styled HTML table
-    const cellStyle = "border:1px solid #e5e7eb;padding:8px 12px;font-size:12px;font-family:Arial,sans-serif;";
-    const headStyle = `${cellStyle}background:${ROJO};color:#fff;font-weight:700;text-align:center;white-space:nowrap;`;
-    const totalStyle = `${cellStyle}background:#111;color:#fff;font-weight:800;`;
-    const altStyle  = `${cellStyle}background:#fff5f5;`;
-    const normStyle = `${cellStyle}background:#fff;`;
+    // Build styled HTML table (safe string concatenation to avoid parser issues)
+    const cs = "border:1px solid #e5e7eb;padding:8px 12px;font-size:12px;font-family:Arial,sans-serif;";
+    const hs = cs+"background:"+ROJO+";color:#fff;font-weight:700;text-align:center;white-space:nowrap;";
+    const ts = cs+"background:#111;color:#fff;font-weight:800;";
+    const as = cs+"background:#fff5f5;";
+    const ns = cs+"background:#fff;";
 
-    const headerRow = cols.map(c=>`<th style="${headStyle}">${c}</th>`).join("");
+    const headerRow = cols.map(c=>"<th style=\""+hs+"\">"+c+"</th>").join("");
     const dataRows  = filas.map((row,i)=>
-      "<tr>"+row.map(cell=>`<td style="${i%2===0?normStyle:altStyle}">${cell}</td>`).join("")+"</tr>"
+      "<tr>"+row.map(cell=>"<td style=\""+(i%2===0?ns:as)+"\">"+cell+"</td>").join("")+"</tr>"
     ).join("");
-    const totalRow  = totales.length ? "<tr>"+totales.map(t=>`<td style="${totalStyle}">${t}</td>`).join("")+"</tr>" : "";
+    const totalRow  = totales.length ? "<tr>"+totales.map(t=>"<td style=\""+ts+"\">"+t+"</td>").join("")+"</tr>" : "";
 
-    const html = `
-<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="utf-8"><style>
-  body{font-family:Arial,sans-serif;}
-  table{border-collapse:collapse;width:100%;}
-</style></head>
-<body>
-<table>
-  <tr><td colspan="${cols.length}" style="background:${ROJO};color:#fff;font-size:16px;font-weight:900;padding:14px 16px;font-family:Arial;">⭐ SUMAPRIX · Bonprix</td></tr>
-  <tr><td colspan="${cols.length}" style="background:#111;color:#fff;font-size:13px;padding:8px 16px;font-family:Arial;">${titulo}</td></tr>
-  <tr><td colspan="${cols.length}" style="background:#f9fafb;color:#888;font-size:11px;padding:6px 16px;font-family:Arial;">Generado: ${fechaLabel} · ${filas.length} registros</td></tr>
-  <tr><td colspan="${cols.length}" style="padding:4px;"></td></tr>
-  <tr>${headerRow}</tr>
-  ${dataRows}
-  ${totalRow}
-  <tr><td colspan="${cols.length}" style="padding:8px;"></td></tr>
-  <tr><td colspan="${cols.length}" style="color:#aaa;font-size:10px;padding:6px 16px;font-family:Arial;">© Bonprix · Programa de Fidelización SUMAPRIX</td></tr>
-</table>
-</body></html>`;
+    const n = cols.length;
+    const tdH = (txt,extra) => "<td colspan=\""+n+"\" style=\""+extra+"\">"+txt+"</td>";
+    const stHead  = "background:"+ROJO+";color:#fff;font-size:16px;font-weight:900;padding:14px 16px;font-family:Arial;";
+    const stSub   = "background:#111;color:#fff;font-size:13px;padding:8px 16px;font-family:Arial;";
+    const stMeta  = "background:#f9fafb;color:#888;font-size:11px;padding:6px 16px;font-family:Arial;";
+    const stFoot  = "color:#aaa;font-size:10px;padding:6px 16px;font-family:Arial;";
+
+    const styleBlock = "body{font-family:Arial,sans-serif;} table{border-collapse:collapse;width:100%;}";
+    const html = [
+      "<html>",
+      "<head><meta charset=\"utf-8\"><sty"+"le>"+styleBlock+"</sty"+"le></head>",
+      "<body><table>",
+      "<tr>"+tdH("⭐ SUMAPRIX · Bonprix",stHead)+"</tr>",
+      "<tr>"+tdH(titulo,stSub)+"</tr>",
+      "<tr>"+tdH("Generado: "+fechaLabel+" · "+filas.length+" registros",stMeta)+"</tr>",
+      "<tr>"+tdH("","padding:4px;")+"</tr>",
+      "<tr>"+headerRow+"</tr>",
+      dataRows,
+      totalRow,
+      "<tr>"+tdH("","padding:8px;")+"</tr>",
+      "<tr>"+tdH("© Bonprix · Programa de Fidelización SUMAPRIX",stFoot)+"</tr>",
+      "</table></body></html>"
+    ].join("\n");
 
     const blob = new Blob([html], {type:"application/vnd.ms-excel;charset=utf-8;"});
     const url  = URL.createObjectURL(blob);
