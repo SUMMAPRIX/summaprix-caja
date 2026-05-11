@@ -36,6 +36,23 @@
     };
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
+
+    // Cargar config del programa al inicio
+    window._SUMAPRIX_CONFIG = { porcentajeAcumulacion:3, horasEsperaCashback:24, valorPunto:1, puntosMinimoCanje:0 };
+    fetch("https://firestore.googleapis.com/v1/projects/sumaprix/databases/(default)/documents/config/programa?key=AIzaSyDvd7wUTP5Ew9BB5oHAUL_lvGHdmPv0or8")
+      .then(r=>r.json()).then(d=>{
+        if (d.fields) {
+          const f = d.fields;
+          window._SUMAPRIX_CONFIG = {
+            porcentajeAcumulacion: f.porcentajeAcumulacion?.doubleValue || 3,
+            horasEsperaCashback:   Number(f.horasEsperaCashback?.integerValue || 24),
+            valorPunto:            f.valorPunto?.doubleValue || 1,
+            puntosMinimoCanje:     Number(f.puntosMinimoCanje?.integerValue || 0),
+            descripcionCashback:   f.descripcionCashback?.stringValue || "",
+          };
+          console.log("SUMAPRIX Config cargada:", window._SUMAPRIX_CONFIG);
+        }
+      }).catch(()=>{});
   </script>
   <script>
 const {
@@ -75,15 +92,21 @@ async function getSucursales() {
   } catch(e) {}
   // Fallback si Firebase no tiene sucursales cargadas aún
   return [
-    { id:"san-isidro",   nombre:"San Isidro",   zona:"Norte", pin:"1234", cajeros:["Valentina","Rodrigo"] },
-    { id:"benavidez",    nombre:"Benavidez",    zona:"Norte", pin:"2345", cajeros:["Lucas","Fernanda"] },
-    { id:"talar",        nombre:"Talar",        zona:"Norte", pin:"3456", cajeros:["Mariano","Sofía"] },
-    { id:"martinez",     nombre:"Martínez",     zona:"Norte", pin:"4567", cajeros:["Diego","Paula"] },
-    { id:"san-fernando", nombre:"San Fernando", zona:"Norte", pin:"5678", cajeros:["Tomás","Belén"] },
-    { id:"moreno",       nombre:"Moreno",       zona:"Norte", pin:"6789", cajeros:["Carlos","Jimena"] },
-    { id:"canning",      nombre:"Canning",      zona:"Sur",   pin:"7890", cajeros:["Roberto","Laura"] },
-    { id:"sgt-cabral",   nombre:"Sgt. Cabral",  zona:"Sur",   pin:"8901", cajeros:["Nicolás","Ana"] },
-    { id:"petion",       nombre:"Petión",       zona:"Sur",   pin:"9012", cajeros:["Gabriel","Micaela"] },
+    { id:"canning", nombre:"Canning", zona:"Sur", pin:"1001", cajeros:[] },
+    { id:"sgt-cabral", nombre:"Sgt. Cabral", zona:"Sur", pin:"1002", cajeros:[] },
+    { id:"petion", nombre:"Petión", zona:"Sur", pin:"1003", cajeros:[] },
+    { id:"bellavista", nombre:"Bellavista", zona:"Norte", pin:"1004", cajeros:[] },
+    { id:"benavidez", nombre:"Benavidez", zona:"Norte", pin:"1005", cajeros:[] },
+    { id:"caamaño", nombre:"Caamaño", zona:"Norte", pin:"1006", cajeros:[] },
+    { id:"del-viso", nombre:"Del Viso", zona:"Norte", pin:"1007", cajeros:[] },
+    { id:"las-piedras", nombre:"Las Piedras", zona:"Sur", pin:"1008", cajeros:[] },
+    { id:"liniers", nombre:"Liniers", zona:"Norte", pin:"1009", cajeros:[] },
+    { id:"lomada", nombre:"Lomada", zona:"Norte", pin:"1010", cajeros:[] },
+    { id:"martinez", nombre:"Martínez", zona:"Norte", pin:"1011", cajeros:[] },
+    { id:"moreno", nombre:"Moreno", zona:"Norte", pin:"1012", cajeros:[] },
+    { id:"san-fernando", nombre:"San Fernando", zona:"Norte", pin:"1013", cajeros:[] },
+    { id:"san-isidro", nombre:"San Isidro", zona:"Norte", pin:"1014", cajeros:[] },
+    { id:"talar", nombre:"Talar", zona:"Norte", pin:"1015", cajeros:[] },
   ];
 }
 
@@ -685,7 +708,8 @@ const PanelVenta = ({
   const confirmar = async () => {
     if (!monto || Number(monto) <= 0) return;
     setLoading(true);
-    const pts = Math.floor(Number(monto) * 0.05);
+    const pct = (window._SUMAPRIX_CONFIG && window._SUMAPRIX_CONFIG.porcentajeAcumulacion) ? window._SUMAPRIX_CONFIG.porcentajeAcumulacion/100 : 0.03;
+        const pts = Math.floor(Number(monto) * pct);
     const nuevoPts = cliente.puntos + pts;
     const updated = {
       ...cliente,
@@ -1072,19 +1096,22 @@ const PanelVenta = ({
       gap: 8,
       marginBottom: 16
     }
-  }, [{
-    l: "Puntos",
-    v: cliente.puntos.toLocaleString(),
-    c: "#f59e0b"
-  }, {
-    l: "Compras",
-    v: cliente.compras,
-    c: "#6366f1"
-  }, {
-    l: "Cashback",
-    v: `$${(cliente.puntos * .05).toFixed(0)}`,
-    c: "#10b981"
-  }].map(s => /*#__PURE__*/React.createElement("div", {
+  }, (() => {
+    const horasConfig = window._SUMAPRIX_CONFIG?.horasEsperaCashback || 24;
+    const ultimaCompra = cliente.ultimaCompraISO ? new Date(cliente.ultimaCompraISO) : null;
+    const horasDesde = ultimaCompra ? (new Date() - ultimaCompra) / 3600000 : 999;
+    const cbDisp = horasDesde >= horasConfig ? (cliente.cashbackPendiente||0) : (cliente.cashbackDisponible||0);
+    const cbPend = horasDesde < horasConfig ? (cliente.cashbackPendiente||0) : 0;
+    return [{
+      l: "Puntos", v: cliente.puntos.toLocaleString(), c: "#f59e0b"
+    }, {
+      l: "Compras", v: cliente.compras, c: "#6366f1"
+    }, {
+      l: "✅ Cashback hoy", v: `$${cbDisp.toLocaleString()}`, c: "#10b981"
+    }, {
+      l: "⏳ Mañana", v: `$${cbPend.toLocaleString()}`, c: "#94a3b8"
+    }];
+  })().map(s => /*#__PURE__*/React.createElement("div", {
     key: s.l,
     style: {
       background: "#f9fafb",
@@ -2079,7 +2106,7 @@ const PanelConsulta = () => {
     c: "#f59e0b"
   }, {
     l: "Cashback",
-    v: `$${(cliente.puntos * .05).toFixed(0)}`,
+    v: `$${(cliente.puntos * 0.01).toFixed(0)}`,
     c: "#10b981"
   }, {
     l: "Compras",
@@ -3051,6 +3078,7 @@ const PanelAdmin = ({ showToast }) => {
     { id:"dashboard", icon:"📊", label:"Dashboard" },
     { id:"sucursales", icon:"🏪", label:"Sucursales" },
     { id:"catalogo",  icon:"🏷️", label:"Catálogo" },
+    { id:"config",    icon:"⚙️", label:"Configuración" },
   ];
 
   return React.createElement("div", { style:{maxWidth:960} },
@@ -3070,6 +3098,7 @@ const PanelAdmin = ({ showToast }) => {
     seccion === "dashboard"  && React.createElement(AdminDashboard, { showToast }),
     seccion === "sucursales" && React.createElement(AdminSucursales, { showToast }),
     seccion === "catalogo"   && React.createElement(AdminCatalogo,   { showToast }),
+    seccion === "config"     && React.createElement(AdminConfig,     { showToast }),
   );
 };
 
@@ -3279,15 +3308,21 @@ const AdminSucursales = ({ showToast }) => {
       setLista(docs);
     } else {
       setLista([
-        {_id:"san-isidro",   id:"san-isidro",   nombre:"San Isidro",   zona:"Norte", pin:"1234", cajeros:["Valentina","Rodrigo"]},
-        {_id:"benavidez",    id:"benavidez",    nombre:"Benavidez",    zona:"Norte", pin:"2345", cajeros:["Lucas","Fernanda"]},
-        {_id:"talar",        id:"talar",        nombre:"Talar",        zona:"Norte", pin:"3456", cajeros:["Mariano","Sofía"]},
-        {_id:"martinez",     id:"martinez",     nombre:"Martínez",     zona:"Norte", pin:"4567", cajeros:["Diego","Paula"]},
-        {_id:"san-fernando", id:"san-fernando", nombre:"San Fernando", zona:"Norte", pin:"5678", cajeros:["Tomás","Belén"]},
-        {_id:"moreno",       id:"moreno",       nombre:"Moreno",       zona:"Norte", pin:"6789", cajeros:["Carlos","Jimena"]},
-        {_id:"canning",      id:"canning",      nombre:"Canning",      zona:"Sur",   pin:"7890", cajeros:["Roberto","Laura"]},
-        {_id:"sgt-cabral",   id:"sgt-cabral",   nombre:"Sgt. Cabral",  zona:"Sur",   pin:"8901", cajeros:["Nicolás","Ana"]},
-        {_id:"petion",       id:"petion",       nombre:"Petión",       zona:"Sur",   pin:"9012", cajeros:["Gabriel","Micaela"]},
+        {_id:"canning", id:"canning", nombre:"Canning", zona:"Sur", pin:"1001", cajeros:[]},
+        {_id:"sgt-cabral", id:"sgt-cabral", nombre:"Sgt. Cabral", zona:"Sur", pin:"1002", cajeros:[]},
+        {_id:"petion", id:"petion", nombre:"Petión", zona:"Sur", pin:"1003", cajeros:[]},
+        {_id:"bellavista", id:"bellavista", nombre:"Bellavista", zona:"Norte", pin:"1004", cajeros:[]},
+        {_id:"benavidez", id:"benavidez", nombre:"Benavidez", zona:"Norte", pin:"1005", cajeros:[]},
+        {_id:"caamaño", id:"caamaño", nombre:"Caamaño", zona:"Norte", pin:"1006", cajeros:[]},
+        {_id:"del-viso", id:"del-viso", nombre:"Del Viso", zona:"Norte", pin:"1007", cajeros:[]},
+        {_id:"las-piedras", id:"las-piedras", nombre:"Las Piedras", zona:"Sur", pin:"1008", cajeros:[]},
+        {_id:"liniers", id:"liniers", nombre:"Liniers", zona:"Norte", pin:"1009", cajeros:[]},
+        {_id:"lomada", id:"lomada", nombre:"Lomada", zona:"Norte", pin:"1010", cajeros:[]},
+        {_id:"martinez", id:"martinez", nombre:"Martínez", zona:"Norte", pin:"1011", cajeros:[]},
+        {_id:"moreno", id:"moreno", nombre:"Moreno", zona:"Norte", pin:"1012", cajeros:[]},
+        {_id:"san-fernando", id:"san-fernando", nombre:"San Fernando", zona:"Norte", pin:"1013", cajeros:[]},
+        {_id:"san-isidro", id:"san-isidro", nombre:"San Isidro", zona:"Norte", pin:"1014", cajeros:[]},
+        {_id:"talar", id:"talar", nombre:"Talar", zona:"Norte", pin:"1015", cajeros:[]},
       ]);
     }
     setLoading(false);
@@ -3495,6 +3530,97 @@ const AdminCatalogo = ({ showToast }) => {
           )
         )
       ))
+    )
+  );
+};
+
+// ── ADMIN CONFIG ──────────────────────────────────────────────────────────
+const AdminConfig = ({ showToast }) => {
+  const [form, setForm] = React.useState({
+    porcentajeAcumulacion: 3,
+    horasEsperaCashback: 24,
+    valorPunto: 1,
+    puntosMinimoCanje: 0,
+    descripcionCashback: "Tu cashback estará disponible a partir de mañana en cualquier BonPrix",
+  });
+  const [loading, setLoading] = React.useState(true);
+  const [saving, setSaving]   = React.useState(false);
+
+  React.useEffect(() => {
+    fbGet("config", "programa").then(d => {
+      if (d) setForm({
+        porcentajeAcumulacion: d.porcentajeAcumulacion || 3,
+        horasEsperaCashback:   d.horasEsperaCashback   || 24,
+        valorPunto:            d.valorPunto            || 1,
+        puntosMinimoCanje:     d.puntosMinimoCanje     || 0,
+        descripcionCashback:   d.descripcionCashback   || "",
+      });
+      setLoading(false);
+    });
+  }, []);
+
+  const guardar = async () => {
+    setSaving(true);
+    await fbSet("config", "programa", {
+      porcentajeAcumulacion: Number(form.porcentajeAcumulacion),
+      horasEsperaCashback:   Number(form.horasEsperaCashback),
+      valorPunto:            Number(form.valorPunto),
+      puntosMinimoCanje:     Number(form.puntosMinimoCanje),
+      descripcionCashback:   form.descripcionCashback,
+    });
+    // Update runtime config
+    window._SUMAPRIX_CONFIG = { ...form };
+    setSaving(false);
+    showToast("✅ Configuración guardada en Firebase");
+  };
+
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  const campos = [
+    { k:"porcentajeAcumulacion", label:"% de acumulación por compra", desc:"Ej: 3 = 3% del monto", suffix:"%" },
+    { k:"horasEsperaCashback",   label:"Horas de espera para usar cashback", desc:"Ej: 24 = disponible al día siguiente", suffix:"hs" },
+    { k:"valorPunto",            label:"Valor de cada punto en pesos", desc:"Ej: 1 = 1 punto = $1", suffix:"$" },
+    { k:"puntosMinimoCanje",     label:"Puntos mínimos para poder canjear", desc:"Ej: 0 = sin mínimo", suffix:"pts" },
+  ];
+
+  if (loading) return React.createElement("div",{style:{padding:40,textAlign:"center",display:"flex",justifyContent:"center"}},React.createElement(Spinner,{size:32}));
+
+  return React.createElement("div",{style:{maxWidth:600}},
+    React.createElement("div",{style:{fontSize:18,fontWeight:900,color:"#111",marginBottom:4}},"⚙️ Configuración del Programa"),
+    React.createElement("div",{style:{fontSize:13,color:"#888",marginBottom:20}},"Parámetros globales de SUMAPRIX · Se aplican en tiempo real"),
+
+    React.createElement("div",{style:{background:"#fff",borderRadius:18,padding:24,boxShadow:"0 2px 14px rgba(0,0,0,.07)",marginBottom:16}},
+      campos.map(c => React.createElement("div",{key:c.k,style:{marginBottom:20}},
+        React.createElement("label",{style:{fontSize:12,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:4}},c.label),
+        React.createElement("div",{style:{fontSize:11,color:"#aaa",marginBottom:8}},c.desc),
+        React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10}},
+          React.createElement("input",{
+            value:form[c.k], onChange:e=>set(c.k,e.target.value),
+            inputMode:"numeric",
+            style:{width:120,padding:"10px 14px",borderRadius:11,border:"2px solid #e5e7eb",fontSize:18,fontWeight:800,color:"#111",outline:"none",textAlign:"center"}
+          }),
+          React.createElement("span",{style:{fontSize:14,fontWeight:700,color:"#888"}},c.suffix)
+        )
+      )),
+
+      React.createElement("div",{style:{marginBottom:20}},
+        React.createElement("label",{style:{fontSize:12,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:4}},"Mensaje al cliente cuando genera cashback"),
+        React.createElement("textarea",{
+          value:form.descripcionCashback, onChange:e=>set("descripcionCashback",e.target.value),
+          rows:2,
+          style:{width:"100%",padding:"10px 14px",borderRadius:11,border:"2px solid #e5e7eb",fontSize:13,color:"#111",outline:"none",resize:"none",fontFamily:"inherit"}
+        })
+      ),
+
+      React.createElement("div",{style:{background:"#f0fdf4",borderRadius:12,padding:"12px 16px",marginBottom:20,fontSize:12,color:"#15803d"}},
+        React.createElement("strong",null,"Ejemplo con config actual: "),
+        `Compra de $10.000 → genera ${Math.floor(10000 * form.porcentajeAcumulacion/100).toLocaleString()} puntos ($${Math.floor(10000 * form.porcentajeAcumulacion/100 * form.valorPunto).toLocaleString()} cashback) · Disponible en ${form.horasEsperaCashback}hs`
+      ),
+
+      React.createElement("button",{onClick:guardar,disabled:saving,
+        style:{width:"100%",padding:"14px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#E30613,#c0000f)",color:"#fff",fontWeight:800,fontSize:15,boxShadow:"0 8px 22px rgba(227,6,19,.25)",display:"flex",alignItems:"center",justifyContent:"center",gap:8,cursor:"pointer"}},
+        saving?React.createElement(React.Fragment,null,React.createElement(Spinner,{size:18,color:"#fff"})," Guardando..."):"Guardar configuración ✓"
+      )
     )
   );
 };
