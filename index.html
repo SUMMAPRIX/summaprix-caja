@@ -3111,10 +3111,12 @@ const AdminDashboard = ({ showToast }) => {
       const filtrados = filtroCli==="todas" ? clientes : clientes.filter(c=>(c.sucursalOrigen||"").toLowerCase().includes((sucursales.find(s=>s.id===filtroCli)?.nombre||"").toLowerCase()));
       titulo = `Listado de Clientes SUMAPRIX — ${sucNombre}`;
       cols   = ["DNI","Nombre","Apellido","Nivel","Puntos","Cashback $","Compras","Nacimiento","Teléfono","Email","Registrado","Sucursal","Canal"];
+      // t() forces text format in Excel - prevents phone/DNI number formatting
+      const t = v => v ? "&#8203;"+String(v) : "";
       filas  = filtrados.map(c=>[
-        c.dni||"", c.nombre||"", c.apellido||"", c.nivel||"Bronce",
-        c.puntos||0, ((c.puntos||0)*1).toFixed(2), c.compras||0,
-        c.nacimiento||"", c.tel||"", c.email||"",
+        t(c.dni), c.nombre||"", c.apellido||"", c.nivel||"Bronce",
+        c.puntos||0, "$"+((c.puntos||0)*1).toFixed(2), c.compras||0,
+        c.nacimiento||"", t(c.tel), c.email||"",
         c.registrado||"", c.sucursalOrigen||"", c.canalOrigen||"Panel"
       ]);
       const totalPts = filtrados.reduce((a,c)=>a+(c.puntos||0),0);
