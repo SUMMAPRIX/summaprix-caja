@@ -35,7 +35,7 @@
     // Firebase REST API - no SDK needed
 
     // Cargar config del programa al inicio
-    window._SUMAPRIX_CONFIG = { porcentajeAcumulacion:5, horasEsperaCashback:24, valorPunto:1, puntosMinimoCanje:0 };
+    window._SUMAPRIX_CONFIG = { porcentajeAcumulacion:5, horasEsperaBonpesos:24, valorPunto:1, puntosMinimoCanje:0 };
     window.addEventListener("DOMContentLoaded", function() {
       fetch("https://firestore.googleapis.com/v1/projects/sumaprix/databases/(default)/documents/config/programa?key=AIzaSyDvd7wUTP5Ew9BB5oHAUL_lvGHdmPv0or8")
         .then(r=>r.json()).then(d=>{
@@ -43,10 +43,10 @@
             const f = d.fields;
             window._SUMAPRIX_CONFIG = {
               porcentajeAcumulacion: f.porcentajeAcumulacion?.doubleValue || 5,
-              horasEsperaCashback:   Number(f.horasEsperaCashback?.integerValue || 24),
+              horasEsperaBonpesos:   Number(f.horasEsperaBonpesos?.integerValue || 24),
               valorPunto:            f.valorPunto?.doubleValue || 1,
               puntosMinimoCanje:     Number(f.puntosMinimoCanje?.integerValue || 0),
-              descripcionCashback:   f.descripcionCashback?.stringValue || "",
+              descripcionBonpesos:   f.descripcionBonpesos?.stringValue || "",
             };
           }
         }).catch(()=>{});
@@ -436,7 +436,7 @@ const Sidebar = ({
   }, {
     id: "canje",
     icon: "💰",
-    label: "Aplicar Cashback"
+    label: "Aplicar Bonpesos"
   }, {
     id: "registro",
     icon: "➕",
@@ -1027,17 +1027,17 @@ const PanelVenta = ({
       marginBottom: 16
     }
   }, (() => {
-    const horasConfig = window._SUMAPRIX_CONFIG?.horasEsperaCashback || 24;
+    const horasConfig = window._SUMAPRIX_CONFIG?.horasEsperaBonpesos || 24;
     const ultimaCompra = cliente.ultimaCompraISO ? new Date(cliente.ultimaCompraISO) : null;
     const horasDesde = ultimaCompra ? (new Date() - ultimaCompra) / 3600000 : 999;
-    const cbDisp = horasDesde >= horasConfig ? (cliente.cashbackPendiente||0) : (cliente.cashbackDisponible||0);
-    const cbPend = horasDesde < horasConfig ? (cliente.cashbackPendiente||0) : 0;
+    const cbDisp = horasDesde >= horasConfig ? (cliente.BonpesosPendiente||0) : (cliente.BonpesosDisponible||0);
+    const cbPend = horasDesde < horasConfig ? (cliente.BonpesosPendiente||0) : 0;
     return [{
       l: "Puntos", v: cliente.puntos.toLocaleString(), c: "#f59e0b"
     }, {
       l: "Compras", v: cliente.compras, c: "#6366f1"
     }, {
-      l: "✅ Cashback hoy", v: `$${cbDisp.toLocaleString()}`, c: "#10b981"
+      l: "✅ Bonpesos hoy", v: `$${cbDisp.toLocaleString()}`, c: "#10b981"
     }, {
       l: "⏳ Mañana", v: `$${cbPend.toLocaleString()}`, c: "#94a3b8"
     }];
@@ -1154,13 +1154,13 @@ const PanelCanje = ({ sesion, onCanje, showToast }) => {
   const [cupon,    setCupon]    = useState(null);  // { codigo, monto, usado }
   const [confirmando, setConfirmando] = useState(false);
 
-  // Calcular cashback disponible
+  // Calcular Bonpesos disponibles
   const calcDisponible = (c) => {
     if (!c) return 0;
-    const horasConfig = window._SUMAPRIX_CONFIG?.horasEsperaCashback || 24;
+    const horasConfig = window._SUMAPRIX_CONFIG?.horasEsperaBonpesos || 24;
     const ultimaCompra = c.ultimaCompraISO ? new Date(c.ultimaCompraISO) : null;
     const horasDesde = ultimaCompra ? (new Date() - ultimaCompra) / 3600000 : 999;
-    return horasDesde >= horasConfig ? (c.cashbackPendiente || 0) : (c.cashbackDisponible || 0);
+    return horasDesde >= horasConfig ? (c.BonpesosPendiente || 0) : (c.BonpesosDisponible || 0);
   };
 
   const buscar = async () => {
@@ -1209,8 +1209,8 @@ const PanelCanje = ({ sesion, onCanje, showToast }) => {
     const nuevoDisponible = Math.max(0, disponible - montoNum);
     const updated = {
       ...cliente,
-      cashbackDisponible: nuevoDisponible,
-      cashbackPendiente:  nuevoDisponible,
+      BonpesosDisponible: nuevoDisponible,
+      BonpesosPendiente:  nuevoDisponible,
     };
     await saveCliente(updated);
 
@@ -1236,7 +1236,7 @@ const PanelCanje = ({ sesion, onCanje, showToast }) => {
     setConfirmando(false);
     setCupon({ ...cupon, usado: true });
     setCliente(updated);
-    showToast(`💰 Cashback de $${montoNum.toLocaleString()} aplicado a ${cliente.nombre}`);
+    showToast(`💰 Bonpesos de $${montoNum.toLocaleString()} aplicado a ${cliente.nombre}`);
   };
 
   const reset = () => { setDni(""); setCliente(null); setMonto(""); setCupon(null); };
@@ -1245,7 +1245,7 @@ const PanelCanje = ({ sesion, onCanje, showToast }) => {
 
   return React.createElement("div", { style:{maxWidth:820} },
     React.createElement("div", {style:{marginBottom:24}},
-      React.createElement("div", {style:{fontSize:22,fontWeight:900,color:"#111"}}, "💰 Aplicar Cashback"),
+      React.createElement("div", {style:{fontSize:22,fontWeight:900,color:"#111"}}, "💰 Aplicar Bonpesos"),
       React.createElement("div", {style:{fontSize:13,color:"#888"}}, "Generá el código para ingresar en Scanntech")
     ),
 
@@ -1275,11 +1275,11 @@ const PanelCanje = ({ sesion, onCanje, showToast }) => {
           )
         ),
 
-        // Cashback disponible
+        // Bonpesos disponibles
         React.createElement("div", {style:{textAlign:"center",padding:"16px 0",marginBottom:16}},
-          React.createElement("div", {style:{fontSize:11,fontWeight:700,color:"#aaa",letterSpacing:1,textTransform:"uppercase",marginBottom:6}}, "Cashback disponible hoy"),
+          React.createElement("div", {style:{fontSize:11,fontWeight:700,color:"#aaa",letterSpacing:1,textTransform:"uppercase",marginBottom:6}}, "Bonpesos disponibles hoy"),
           React.createElement("div", {style:{fontSize:44,fontWeight:900,color:disponible>0?"#10b981":"#ccc",lineHeight:1}}, `$${disponible.toLocaleString()}`),
-          disponible === 0 && React.createElement("div", {style:{fontSize:12,color:"#aaa",marginTop:6}}, "⏳ Los puntos de la última compra estarán disponibles mañana")
+          disponible === 0 && React.createElement("div", {style:{fontSize:12,color:"#aaa",marginTop:6}}, "⏳ Los Bonpesos de la última compra estarán disponibles mañana")
         ),
 
         disponible > 0 && React.createElement("div", null,
@@ -1310,7 +1310,7 @@ const PanelCanje = ({ sesion, onCanje, showToast }) => {
       // Panel derecho vacío o instrucciones
       React.createElement("div", {style:{background:"#fff",borderRadius:18,padding:24,boxShadow:"0 2px 10px rgba(0,0,0,.06)",display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center",gap:12,textAlign:"center"}},
         React.createElement("div", {style:{fontSize:40,opacity:.2}}, "🏷️"),
-        React.createElement("div", {style:{fontSize:13,color:"#ccc",fontWeight:500}}, disponible>0?"Ingresá el monto y generá el código para Scanntech":"Sin cashback disponible hoy")
+        React.createElement("div", {style:{fontSize:13,color:"#ccc",fontWeight:500}}, disponible>0?"Ingresá el monto y generá el código para Scanntech":"Sin Bonpesos disponibles hoy")
       )
     ),
 
@@ -1362,7 +1362,7 @@ const PanelCanje = ({ sesion, onCanje, showToast }) => {
     // Canje confirmado
     cliente && cupon && cupon.usado && React.createElement("div", {style:{background:"linear-gradient(135deg,#064e3b,#065f46)",borderRadius:18,padding:28,textAlign:"center",animation:"popIn .4s ease",maxWidth:480,boxShadow:"0 8px 28px rgba(6,78,59,.3)"}},
       React.createElement("div", {style:{fontSize:48,marginBottom:10}}, "✅"),
-      React.createElement("div", {style:{fontSize:20,fontWeight:900,color:"#fff",marginBottom:4}}, "¡Cashback aplicado!"),
+      React.createElement("div", {style:{fontSize:20,fontWeight:900,color:"#fff",marginBottom:4}}, "¡Bonpesos aplicado!"),
       React.createElement("div", {style:{fontSize:13,color:"rgba(255,255,255,.7)",marginBottom:20}}, `$${cupon.monto.toLocaleString()} descontados a ${cliente.nombre}`),
       React.createElement("div", {style:{background:"rgba(0,0,0,.2)",borderRadius:12,padding:14,marginBottom:20}},
         React.createElement("div", {style:{fontSize:11,color:"rgba(255,255,255,.5)",marginBottom:4}}, "Código utilizado"),
@@ -1928,7 +1928,7 @@ const PanelConsulta = () => {
     v: cliente.puntos.toLocaleString(),
     c: "#f59e0b"
   }, {
-    l: "Cashback",
+    l: "Bonpesos",
     v: `$${(cliente.puntos * 0.01).toFixed(0)}`,
     c: "#10b981"
   }, {
@@ -2966,7 +2966,7 @@ const AdminDashboard = ({ showToast }) => {
     if (tipo === "clientes") {
       const filtrados = filtroCli==="todas" ? clientes : clientes.filter(c=>(c.sucursalOrigen||"").toLowerCase().includes((sucursales.find(s=>s.id===filtroCli)?.nombre||"").toLowerCase()));
       titulo = `Listado de Clientes SUMAPRIX — ${sucNombre}`;
-      cols   = ["DNI","Nombre","Apellido","Nivel","Puntos","Cashback $","Compras","Nacimiento","Teléfono","Email","Registrado","Sucursal","Canal"];
+      cols   = ["DNI","Nombre","Apellido","Nivel","Puntos","Bonpesos $","Compras","Nacimiento","Teléfono","Email","Registrado","Sucursal","Canal"];
       // t() forces text format in Excel - prevents phone/DNI number formatting
       const t = v => v ? "&#8203;"+String(v) : "";
       filas  = filtrados.map(c=>[
@@ -3410,10 +3410,10 @@ const AdminCatalogo = ({ showToast }) => {
 const AdminConfig = ({ showToast }) => {
   const [form, setForm] = React.useState({
     porcentajeAcumulacion: 5,
-    horasEsperaCashback: 24,
+    horasEsperaBonpesos: 24,
     valorPunto: 1,
     puntosMinimoCanje: 0,
-    descripcionCashback: "Tu cashback estará disponible a partir de mañana en cualquier Bonprix",
+    descripcionBonpesos: "Tus Bonpesos estarán disponibles a partir de mañana en cualquier Bonprix",
   });
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving]   = React.useState(false);
@@ -3422,10 +3422,10 @@ const AdminConfig = ({ showToast }) => {
     fbGet("config", "programa").then(d => {
       if (d) setForm({
         porcentajeAcumulacion: d.porcentajeAcumulacion || 5,
-        horasEsperaCashback:   d.horasEsperaCashback   || 24,
+        horasEsperaBonpesos:   d.horasEsperaBonpesos   || 24,
         valorPunto:            d.valorPunto            || 1,
         puntosMinimoCanje:     d.puntosMinimoCanje     || 0,
-        descripcionCashback:   d.descripcionCashback   || "",
+        descripcionBonpesos:   d.descripcionBonpesos   || "",
       });
       setLoading(false);
     });
@@ -3435,10 +3435,10 @@ const AdminConfig = ({ showToast }) => {
     setSaving(true);
     await fbSet("config", "programa", {
       porcentajeAcumulacion: Number(form.porcentajeAcumulacion),
-      horasEsperaCashback:   Number(form.horasEsperaCashback),
+      horasEsperaBonpesos:   Number(form.horasEsperaBonpesos),
       valorPunto:            Number(form.valorPunto),
       puntosMinimoCanje:     Number(form.puntosMinimoCanje),
-      descripcionCashback:   form.descripcionCashback,
+      descripcionBonpesos:   form.descripcionBonpesos,
     });
     // Update runtime config
     window._SUMAPRIX_CONFIG = { ...form };
@@ -3450,7 +3450,7 @@ const AdminConfig = ({ showToast }) => {
 
   const campos = [
     { k:"porcentajeAcumulacion", label:"% de acumulación por compra", desc:"Ej: 3 = 3% del monto", suffix:"%" },
-    { k:"horasEsperaCashback",   label:"Horas de espera para usar cashback", desc:"Ej: 24 = disponible al día siguiente", suffix:"hs" },
+    { k:"horasEsperaBonpesos",   label:"Horas de espera para usar Bonpesos", desc:"Ej: 24 = disponible al día siguiente", suffix:"hs" },
     { k:"valorPunto",            label:"Valor de cada punto en pesos", desc:"Ej: 1 = 1 punto = $1", suffix:"$" },
     { k:"puntosMinimoCanje",     label:"Puntos mínimos para poder canjear", desc:"Ej: 0 = sin mínimo", suffix:"pts" },
   ];
@@ -3476,9 +3476,9 @@ const AdminConfig = ({ showToast }) => {
       )),
 
       React.createElement("div",{style:{marginBottom:20}},
-        React.createElement("label",{style:{fontSize:12,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:4}},"Mensaje al cliente cuando genera cashback"),
+        React.createElement("label",{style:{fontSize:12,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,display:"block",marginBottom:4}},"Mensaje al cliente cuando genera Bonpesos"),
         React.createElement("textarea",{
-          value:form.descripcionCashback, onChange:e=>set("descripcionCashback",e.target.value),
+          value:form.descripcionBonpesos, onChange:e=>set("descripcionBonpesos",e.target.value),
           rows:2,
           style:{width:"100%",padding:"10px 14px",borderRadius:11,border:"2px solid #e5e7eb",fontSize:13,color:"#111",outline:"none",resize:"none",fontFamily:"inherit"}
         })
@@ -3486,7 +3486,7 @@ const AdminConfig = ({ showToast }) => {
 
       React.createElement("div",{style:{background:"#f0fdf4",borderRadius:12,padding:"12px 16px",marginBottom:20,fontSize:12,color:"#15803d"}},
         React.createElement("strong",null,"Ejemplo con config actual: "),
-        `Ejemplo: Compra de $10.000 → genera ${Math.floor(10000 * form.porcentajeAcumulacion/100).toLocaleString()} puntos = $${Math.floor(10000 * form.porcentajeAcumulacion/100 * form.valorPunto).toLocaleString()} de cashback · Disponible en ${form.horasEsperaCashback}hs`
+        `Ejemplo: Compra de $10.000 → genera ${Math.floor(10000 * form.porcentajeAcumulacion/100).toLocaleString()} puntos = $${Math.floor(10000 * form.porcentajeAcumulacion/100 * form.valorPunto).toLocaleString()} de Bonpesos · Disponible en ${form.horasEsperaBonpesos}hs`
       ),
 
       React.createElement("button",{onClick:guardar,disabled:saving,
