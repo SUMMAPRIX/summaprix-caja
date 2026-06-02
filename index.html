@@ -35,14 +35,14 @@
     // Firebase REST API - no SDK needed
 
     // Cargar config del programa al inicio
-    window._SUMAPRIX_CONFIG = { porcentajeAcumulacion:3, horasEsperaCashback:24, valorPunto:1, puntosMinimoCanje:0 };
+    window._SUMAPRIX_CONFIG = { porcentajeAcumulacion:5, horasEsperaCashback:24, valorPunto:1, puntosMinimoCanje:0 };
     window.addEventListener("DOMContentLoaded", function() {
       fetch("https://firestore.googleapis.com/v1/projects/sumaprix/databases/(default)/documents/config/programa?key=AIzaSyDvd7wUTP5Ew9BB5oHAUL_lvGHdmPv0or8")
         .then(r=>r.json()).then(d=>{
           if (d.fields) {
             const f = d.fields;
             window._SUMAPRIX_CONFIG = {
-              porcentajeAcumulacion: f.porcentajeAcumulacion?.doubleValue || 3,
+              porcentajeAcumulacion: f.porcentajeAcumulacion?.doubleValue || 5,
               horasEsperaCashback:   Number(f.horasEsperaCashback?.integerValue || 24),
               valorPunto:            f.valorPunto?.doubleValue || 1,
               puntosMinimoCanje:     Number(f.puntosMinimoCanje?.integerValue || 0),
@@ -435,8 +435,8 @@ const Sidebar = ({
     label: "Nueva Venta"
   }, {
     id: "canje",
-    icon: "🎁",
-    label: "Canjear Premio"
+    icon: "💰",
+    label: "Aplicar Cashback"
   }, {
     id: "registro",
     icon: "➕",
@@ -638,7 +638,7 @@ const PanelVenta = ({
   const confirmar = async () => {
     if (!monto || Number(monto) <= 0) return;
     setLoading(true);
-    const pct = (window._SUMAPRIX_CONFIG && window._SUMAPRIX_CONFIG.porcentajeAcumulacion) ? window._SUMAPRIX_CONFIG.porcentajeAcumulacion/100 : 0.03;
+    const pct = (window._SUMAPRIX_CONFIG && window._SUMAPRIX_CONFIG.porcentajeAcumulacion) ? window._SUMAPRIX_CONFIG.porcentajeAcumulacion/100 : 0.05;
         const pts = Math.floor(Number(monto) * pct);
     const nuevoPts = cliente.puntos + pts;
     const updated = {
@@ -1145,341 +1145,234 @@ const PanelVenta = ({
   }, "Nueva venta \u2192")))));
 };
 
-// ── PANEL CANJE ────────────────────────────────────────────────────────────
-const PanelCanje = ({
-  sesion,
-  onCanje,
-  showToast
-}) => {
-  const [dni, setDni] = useState("");
-  const [cliente, setCliente] = useState(null);
-  const [sel, setSel] = useState(null);
-  const [done, setDone] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [premios, setPremios] = useState([]);
-  useEffect(() => {
-    getPremios().then(setPremios);
-  }, []);
+// ── PANEL CANJE (CASHBACK) ────────────────────────────────────────────────
+const PanelCanje = ({ sesion, onCanje, showToast }) => {
+  const [dni,      setDni]      = useState("");
+  const [cliente,  setCliente]  = useState(null);
+  const [monto,    setMonto]    = useState("");
+  const [loading,  setLoading]  = useState(false);
+  const [cupon,    setCupon]    = useState(null);  // { codigo, monto, usado }
+  const [confirmando, setConfirmando] = useState(false);
+
+  // Calcular cashback disponible
+  const calcDisponible = (c) => {
+    if (!c) return 0;
+    const horasConfig = window._SUMAPRIX_CONFIG?.horasEsperaCashback || 24;
+    const ultimaCompra = c.ultimaCompraISO ? new Date(c.ultimaCompraISO) : null;
+    const horasDesde = ultimaCompra ? (new Date() - ultimaCompra) / 3600000 : 999;
+    return horasDesde >= horasConfig ? (c.cashbackPendiente || 0) : (c.cashbackDisponible || 0);
+  };
+
   const buscar = async () => {
     if (!/^\d{7,8}$/.test(dni)) return;
     setLoading(true);
     const c = await getCliente(dni);
     setLoading(false);
-    if (c) {
-      setCliente(c);
-      setSel(null);
-      setDone(false);
-    } else showToast("⚠️ DNI no encontrado");
+    if (c) { setCliente(c); setMonto(""); setCupon(null); }
+    else showToast("⚠️ DNI no encontrado en SUMAPRIX");
   };
-  const confirmarCanje = async () => {
-    if (!sel || cliente.puntos < sel.pts) return;
-    setLoading(true);
-    const nuevoPts = cliente.puntos - sel.pts;
+
+  // Generar código único de cupón
+  const generarCodigo = (monto) => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const rand = (n) => Array.from({length:n}, ()=>chars[Math.floor(Math.random()*chars.length)]).join("");
+    return `BP-${rand(4)}-${monto}`;
+  };
+
+  const generarCupon = async () => {
+    const montoNum = Number(monto);
+    const disponible = calcDisponible(cliente);
+    if (!montoNum || montoNum <= 0) { showToast("⚠️ Ingresá un monto válido"); return; }
+    if (montoNum > disponible) { showToast(`⚠️ El cliente solo tiene $${disponible.toLocaleString()} disponibles`); return; }
+    
+    const codigo = generarCodigo(montoNum);
+    const nuevoCupon = { codigo, monto: montoNum, dni: cliente.dni, fecha: hoy(), hora: now(), usado: false };
+    
+    // Guardar cupón en Firebase
+    await fbSet("cupones", codigo, {
+      ...nuevoCupon,
+      sucursalId: sesion.sucursal.id,
+      sucursal:   sesion.sucursal.nombre,
+      cajero:     sesion.cajero,
+    });
+    setCupon(nuevoCupon);
+    showToast(`✅ Cupón ${codigo} generado`);
+  };
+
+  const confirmarUso = async () => {
+    setConfirmando(true);
+    const disponible = calcDisponible(cliente);
+    const montoNum = cupon.monto;
+    const ptsUsados = montoNum; // 1 punto = $1
+
+    // Actualizar cliente
+    const nuevoDisponible = Math.max(0, disponible - montoNum);
     const updated = {
       ...cliente,
-      puntos: nuevoPts,
-      nivel: calcNivel(nuevoPts)
+      cashbackDisponible: nuevoDisponible,
+      cashbackPendiente:  nuevoDisponible,
     };
     await saveCliente(updated);
+
+    // Marcar cupón como usado
+    await fbSet("cupones", cupon.codigo, { ...cupon, usado: true });
+
+    // Log movimiento
     await logMovimiento({
-      tipo: "canje",
-      dni: cliente.dni,
-      nombre: `${cliente.nombre} ${cliente.apellido}`,
-      premio: sel.nombre,
-      pts: sel.pts,
+      tipo:       "canje",
+      dni:        cliente.dni,
+      nombre:     `${cliente.nombre} ${cliente.apellido}`,
+      pts:        ptsUsados,
+      monto:      montoNum,
+      cupon:      cupon.codigo,
       sucursalId: sesion.sucursal.id,
-      sucursal: sesion.sucursal.nombre,
-      cajero: sesion.cajero,
-      fecha: hoy(),
-      hora: now()
+      sucursal:   sesion.sucursal.nombre,
+      cajero:     sesion.cajero,
+      fecha:      hoy(),
+      hora:       now(),
     });
-    setCliente(updated);
+
     onCanje();
-    setLoading(false);
-    setDone(true);
-    showToast(`🎁 ${sel.nombre} canjeado`);
+    setConfirmando(false);
+    setCupon({ ...cupon, usado: true });
+    setCliente(updated);
+    showToast(`💰 Cashback de $${montoNum.toLocaleString()} aplicado a ${cliente.nombre}`);
   };
-  const reset = () => {
-    setDni("");
-    setCliente(null);
-    setSel(null);
-    setDone(false);
-  };
+
+  const reset = () => { setDni(""); setCliente(null); setMonto(""); setCupon(null); };
+  const disponible = calcDisponible(cliente);
   const niv = cliente ? NIVEL[cliente.nivel] : null;
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      maxWidth: 900
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 24
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 22,
-      fontWeight: 900,
-      color: "#111"
-    }
-  }, "Canjear Premio"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13,
-      color: "#888"
-    }
-  }, "Descont\xE1 puntos y entreg\xE1 el premio al cliente")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "#fff",
-      borderRadius: 18,
-      padding: 18,
-      boxShadow: "0 2px 10px rgba(0,0,0,.06)",
-      marginBottom: 18,
-      display: "flex",
-      gap: 10
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    value: dni,
-    onChange: e => setDni(e.target.value.replace(/\D/g, "")),
-    onKeyDown: e => e.key === "Enter" && buscar(),
-    placeholder: "DNI del cliente",
-    maxLength: 8,
-    style: {
-      flex: 1,
-      padding: "11px 14px",
-      borderRadius: 11,
-      border: "2px solid #e5e7eb",
-      fontSize: 17,
-      fontWeight: 700,
-      letterSpacing: 2,
-      outline: "none"
-    }
-  }), /*#__PURE__*/React.createElement("button", {
-    onClick: buscar,
-    disabled: dni.length < 7 || loading,
-    style: {
-      padding: "11px 20px",
-      borderRadius: 11,
-      border: "none",
-      background: dni.length >= 7 ? "#E30613" : "#e5e7eb",
-      color: "#fff",
-      fontWeight: 800,
-      fontSize: 13,
-      display: "flex",
-      alignItems: "center",
-      gap: 6
-    }
-  }, loading ? /*#__PURE__*/React.createElement(Spinner, {
-    size: 16,
-    color: "#fff"
-  }) : "Buscar")), cliente && !done && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "grid",
-      gridTemplateColumns: "260px 1fr",
-      gap: 18,
-      animation: "fadeIn .3s ease"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "#fff",
-      borderRadius: 18,
-      padding: 18,
-      boxShadow: "0 2px 10px rgba(0,0,0,.06)"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "center",
-      gap: 10,
-      marginBottom: 14,
-      paddingBottom: 14,
-      borderBottom: "1px solid #f3f4f6"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 40,
-      height: 40,
-      borderRadius: 10,
-      background: niv.bg,
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      fontSize: 20
-    }
-  }, niv.emoji), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 14,
-      fontWeight: 800,
-      color: "#111"
-    }
-  }, cliente.nombre, " ", cliente.apellido), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: "#aaa"
-    }
-  }, "DNI ", cliente.dni))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      textAlign: "center",
-      padding: "14px 0",
-      borderBottom: "1px solid #f3f4f6",
-      marginBottom: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 32,
-      fontWeight: 900,
-      color: "#f59e0b"
-    }
-  }, cliente.puntos.toLocaleString()), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: "#aaa",
-      fontWeight: 600
-    }
-  }, "PUNTOS DISPONIBLES")), sel && /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: cliente.puntos >= sel.pts ? "#f0fdf4" : "#fef2f2",
-      borderRadius: 10,
-      padding: 10,
-      textAlign: "center"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      fontWeight: 700,
-      color: cliente.puntos >= sel.pts ? "#15803d" : "#dc2626"
-    }
-  }, cliente.puntos >= sel.pts ? "✅ Puede canjear" : `❌ Le faltan ${sel.pts - cliente.puntos} pts`))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      fontWeight: 700,
-      color: "#aaa",
-      textTransform: "uppercase",
-      letterSpacing: .5,
-      marginBottom: 10
-    }
-  }, "Seleccion\xE1 el premio"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "grid",
-      gridTemplateColumns: "1fr 1fr 1fr",
-      gap: 10,
-      marginBottom: 14
-    }
-  }, premios.map(p => {
-    const puede = cliente.puntos >= p.pts,
-      isSel = sel && sel.id === p.id;
-    return /*#__PURE__*/React.createElement("div", {
-      key: p.id,
-      onClick: () => puede && setSel(p),
-      style: {
-        background: "#fff",
-        borderRadius: 14,
-        padding: 14,
-        textAlign: "center",
-        cursor: puede ? "pointer" : "not-allowed",
-        border: `2px solid ${isSel ? "#E30613" : puede ? "#e5e7eb" : "#f3f4f6"}`,
-        opacity: puede ? 1 : .45
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 28,
-        marginBottom: 5
-      }
-    }, p.emoji), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 11,
-        fontWeight: 700,
-        color: "#111",
-        marginBottom: 3
-      }
-    }, p.nombre), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 13,
-        fontWeight: 900,
-        color: "#E30613"
-      }
-    }, p.pts, " pts"));
-  })), sel && cliente.puntos >= sel.pts && /*#__PURE__*/React.createElement("button", {
-    onClick: confirmarCanje,
-    disabled: loading,
-    style: {
-      width: "100%",
-      padding: "14px",
-      borderRadius: 14,
-      border: "none",
-      background: "linear-gradient(135deg,#E30613,#c0000f)",
-      color: "#fff",
-      fontWeight: 800,
-      fontSize: 14,
-      boxShadow: "0 6px 20px rgba(227,6,19,.25)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: 8
-    }
-  }, loading ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(Spinner, {
-    size: 18,
-    color: "#fff"
-  }), " Procesando...") : `Confirmar canje · -${sel.pts} pts ✓`))), done && sel && /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "linear-gradient(135deg,#4c1d95,#5b21b6)",
-      borderRadius: 18,
-      padding: 28,
-      textAlign: "center",
-      animation: "popIn .4s ease",
-      maxWidth: 400
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 48,
-      marginBottom: 10
-    }
-  }, sel.emoji), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 20,
-      fontWeight: 900,
-      color: "#fff",
-      marginBottom: 4
-    }
-  }, "\xA1Premio canjeado!"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13,
-      color: "rgba(255,255,255,.7)",
-      marginBottom: 18
-    }
-  }, "Entreg\xE1 ", /*#__PURE__*/React.createElement("strong", {
-    style: {
-      color: "#fff"
-    }
-  }, sel.nombre)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "rgba(0,0,0,.2)",
-      borderRadius: 12,
-      padding: 14,
-      marginBottom: 18
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 26,
-      fontWeight: 900,
-      color: "#c4b5fd"
-    }
-  }, cliente.puntos.toLocaleString()), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: "rgba(255,255,255,.5)"
-    }
-  }, "puntos restantes")), /*#__PURE__*/React.createElement("button", {
-    onClick: reset,
-    style: {
-      width: "100%",
-      padding: "12px",
-      borderRadius: 12,
-      border: "none",
-      background: "rgba(255,255,255,.15)",
-      color: "#fff",
-      fontWeight: 800,
-      fontSize: 13,
-      cursor: "pointer"
-    }
-  }, "Nuevo canje \u2192")));
+
+  return React.createElement("div", { style:{maxWidth:820} },
+    React.createElement("div", {style:{marginBottom:24}},
+      React.createElement("div", {style:{fontSize:22,fontWeight:900,color:"#111"}}, "💰 Aplicar Cashback"),
+      React.createElement("div", {style:{fontSize:13,color:"#888"}}, "Generá el código para ingresar en Scanntech")
+    ),
+
+    // Buscar cliente
+    React.createElement("div", {style:{background:"#fff",borderRadius:18,padding:18,boxShadow:"0 2px 10px rgba(0,0,0,.06)",marginBottom:18,display:"flex",gap:10}},
+      React.createElement("input", {
+        value:dni, onChange:e=>setDni(e.target.value.replace(/\D/g,"")),
+        onKeyDown:e=>e.key==="Enter"&&buscar(),
+        placeholder:"DNI del cliente", maxLength:8,
+        style:{flex:1,padding:"11px 14px",borderRadius:11,border:"2px solid #e5e7eb",fontSize:17,fontWeight:700,letterSpacing:2,outline:"none"}
+      }),
+      React.createElement("button", {
+        onClick:buscar, disabled:dni.length<7||loading,
+        style:{padding:"11px 20px",borderRadius:11,border:"none",background:dni.length>=7?"#E30613":"#e5e7eb",color:"#fff",fontWeight:800,fontSize:13,display:"flex",alignItems:"center",gap:6}
+      }, loading ? React.createElement(Spinner,{size:16,color:"#fff"}) : "Buscar")
+    ),
+
+    cliente && !cupon && React.createElement("div", {style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:18,animation:"fadeIn .3s ease"}},
+
+      // Ficha cliente
+      React.createElement("div", {style:{background:"#fff",borderRadius:18,padding:22,boxShadow:"0 2px 10px rgba(0,0,0,.06)"}},
+        React.createElement("div", {style:{display:"flex",alignItems:"center",gap:12,marginBottom:18,paddingBottom:18,borderBottom:"1px solid #f3f4f6"}},
+          React.createElement("div", {style:{width:44,height:44,borderRadius:12,background:niv.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}),
+          React.createElement("div", {style:{flex:1}},
+            React.createElement("div", {style:{fontSize:16,fontWeight:900,color:"#111"}}, `${cliente.nombre} ${cliente.apellido}`),
+            React.createElement("div", {style:{fontSize:11,color:"#aaa"}}, `DNI ${cliente.dni} · Nivel ${cliente.nivel}`)
+          )
+        ),
+
+        // Cashback disponible
+        React.createElement("div", {style:{textAlign:"center",padding:"16px 0",marginBottom:16}},
+          React.createElement("div", {style:{fontSize:11,fontWeight:700,color:"#aaa",letterSpacing:1,textTransform:"uppercase",marginBottom:6}}, "Cashback disponible hoy"),
+          React.createElement("div", {style:{fontSize:44,fontWeight:900,color:disponible>0?"#10b981":"#ccc",lineHeight:1}}, `$${disponible.toLocaleString()}`),
+          disponible === 0 && React.createElement("div", {style:{fontSize:12,color:"#aaa",marginTop:6}}, "⏳ Los puntos de la última compra estarán disponibles mañana")
+        ),
+
+        disponible > 0 && React.createElement("div", null,
+          React.createElement("div", {style:{fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:.5,marginBottom:6}}, "Monto a descontar"),
+          React.createElement("div", {style:{position:"relative",marginBottom:10}},
+            React.createElement("span", {style:{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",fontSize:18,color:"#aaa",fontWeight:700}}, "$"),
+            React.createElement("input", {
+              value:monto,
+              onChange:e=>setMonto(e.target.value.replace(/\D/g,"")),
+              placeholder:"0",
+              style:{width:"100%",padding:"12px 14px 12px 32px",borderRadius:11,border:"2px solid #e5e7eb",fontSize:22,fontWeight:800,outline:"none",color:"#111"}
+            })
+          ),
+          monto && Number(monto) > disponible && React.createElement("div", {style:{fontSize:12,color:"#ef4444",marginBottom:8,fontWeight:600}},
+            `⚠️ Máximo disponible: $${disponible.toLocaleString()}`
+          ),
+          React.createElement("button", {
+            onClick:generarCupon,
+            disabled:!monto||Number(monto)<=0||Number(monto)>disponible,
+            style:{width:"100%",padding:"13px",borderRadius:12,border:"none",
+              background:monto&&Number(monto)>0&&Number(monto)<=disponible?"linear-gradient(135deg,#E30613,#c0000f)":"#e5e7eb",
+              color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",
+              boxShadow:monto&&Number(monto)>0&&Number(monto)<=disponible?"0 6px 18px rgba(227,6,19,.25)":"none"}
+          }, "Generar código para Scanntech →")
+        )
+      ),
+
+      // Panel derecho vacío o instrucciones
+      React.createElement("div", {style:{background:"#fff",borderRadius:18,padding:24,boxShadow:"0 2px 10px rgba(0,0,0,.06)",display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center",gap:12,textAlign:"center"}},
+        React.createElement("div", {style:{fontSize:40,opacity:.2}}, "🏷️"),
+        React.createElement("div", {style:{fontSize:13,color:"#ccc",fontWeight:500}}, disponible>0?"Ingresá el monto y generá el código para Scanntech":"Sin cashback disponible hoy")
+      )
+    ),
+
+    // Cupón generado
+    cliente && cupon && !cupon.usado && React.createElement("div", {style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:18,animation:"popIn .4s ease"}},
+
+      // Código para Scanntech
+      React.createElement("div", {style:{background:"linear-gradient(135deg,#111318,#1e2230)",borderRadius:18,padding:28,boxShadow:"0 8px 32px rgba(0,0,0,.2)"}},
+        React.createElement("div", {style:{fontSize:11,fontWeight:700,color:"rgba(255,255,255,.4)",letterSpacing:3,textTransform:"uppercase",marginBottom:12}}, "Código para Scanntech"),
+        React.createElement("div", {style:{background:"rgba(255,255,255,.08)",border:"2px dashed rgba(255,255,255,.2)",borderRadius:14,padding:"20px 16px",textAlign:"center",marginBottom:20}},
+          React.createElement("div", {style:{fontFamily:"monospace",fontSize:28,fontWeight:900,color:"#fff",letterSpacing:4}}, cupon.codigo),
+          React.createElement("div", {style:{fontSize:11,color:"rgba(255,255,255,.4)",marginTop:6}}, "Ingresá este código en Scanntech")
+        ),
+        React.createElement("div", {style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}},
+          React.createElement("div", {style:{background:"rgba(0,0,0,.3)",borderRadius:10,padding:12,textAlign:"center"}},
+            React.createElement("div", {style:{fontSize:22,fontWeight:900,color:"#10b981"}}, `$${cupon.monto.toLocaleString()}`),
+            React.createElement("div", {style:{fontSize:10,color:"rgba(255,255,255,.4)"}}, "descuento")
+          ),
+          React.createElement("div", {style:{background:"rgba(0,0,0,.3)",borderRadius:10,padding:12,textAlign:"center"}},
+            React.createElement("div", {style:{fontSize:22,fontWeight:900,color:"#f59e0b"}}, `$${Math.max(0,disponible-cupon.monto).toLocaleString()}`),
+            React.createElement("div", {style:{fontSize:10,color:"rgba(255,255,255,.4)"}}, "saldo restante")
+          )
+        ),
+        React.createElement("div", {style:{fontSize:12,color:"rgba(255,255,255,.3)",textAlign:"center"}}, `${cliente.nombre} · ${hoy()}`)
+      ),
+
+      // Confirmar uso
+      React.createElement("div", {style:{background:"#fff",borderRadius:18,padding:24,boxShadow:"0 2px 10px rgba(0,0,0,.06)",display:"flex",flexDirection:"column",gap:14}},
+        React.createElement("div", {style:{fontSize:15,fontWeight:800,color:"#111"}}, "¿Ya ingresaste el código en Scanntech?"),
+        React.createElement("div", {style:{fontSize:13,color:"#888",lineHeight:1.6}},
+          `1. Ingresá el código `, React.createElement("strong", {style:{color:"#111",fontFamily:"monospace"}}, cupon.codigo), ` en Scanntech
+2. Confirmá el descuento de $${cupon.monto.toLocaleString()} en la venta
+3. Una vez hecho, clickeá el botón de abajo`
+        ),
+        React.createElement("div", {style:{background:"#f0fdf4",borderRadius:10,padding:"12px 14px",fontSize:12,color:"#15803d",fontWeight:600}},
+          `✅ Se descontarán $${cupon.monto.toLocaleString()} (${cupon.monto} puntos) del saldo de ${cliente.nombre}`
+        ),
+        React.createElement("button", {
+          onClick:confirmarUso, disabled:confirmando,
+          style:{marginTop:"auto",padding:"14px",borderRadius:14,border:"none",background:"linear-gradient(135deg,#10b981,#065f46)",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",boxShadow:"0 6px 20px rgba(16,185,129,.25)",display:"flex",alignItems:"center",justifyContent:"center",gap:8}
+        }, confirmando ? React.createElement(React.Fragment,null,React.createElement(Spinner,{size:16,color:"#fff"})," Procesando...") : "✓ Confirmar — Ya apliqué el descuento"),
+        React.createElement("button", {
+          onClick:()=>setCupon(null),
+          style:{padding:"10px",borderRadius:12,border:"1px solid #e5e7eb",background:"#fff",color:"#888",fontWeight:600,fontSize:12,cursor:"pointer"}
+        }, "Cancelar — No lo usé")
+      )
+    ),
+
+    // Canje confirmado
+    cliente && cupon && cupon.usado && React.createElement("div", {style:{background:"linear-gradient(135deg,#064e3b,#065f46)",borderRadius:18,padding:28,textAlign:"center",animation:"popIn .4s ease",maxWidth:480,boxShadow:"0 8px 28px rgba(6,78,59,.3)"}},
+      React.createElement("div", {style:{fontSize:48,marginBottom:10}}, "✅"),
+      React.createElement("div", {style:{fontSize:20,fontWeight:900,color:"#fff",marginBottom:4}}, "¡Cashback aplicado!"),
+      React.createElement("div", {style:{fontSize:13,color:"rgba(255,255,255,.7)",marginBottom:20}}, `$${cupon.monto.toLocaleString()} descontados a ${cliente.nombre}`),
+      React.createElement("div", {style:{background:"rgba(0,0,0,.2)",borderRadius:12,padding:14,marginBottom:20}},
+        React.createElement("div", {style:{fontSize:11,color:"rgba(255,255,255,.5)",marginBottom:4}}, "Código utilizado"),
+        React.createElement("div", {style:{fontFamily:"monospace",fontSize:18,fontWeight:900,color:"#6ee7b7",letterSpacing:3}}, cupon.codigo)
+      ),
+      React.createElement("button", {onClick:reset,
+        style:{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"rgba(255,255,255,.15)",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer"}
+      }, "Nuevo canje →")
+    )
+  );
 };
 
 // ── PANEL REGISTRO ─────────────────────────────────────────────────────────
@@ -1543,7 +1436,7 @@ const PanelRegistro = ({
       sexo: form.sexo,
       tel: form.tel.trim(),
       email: form.email.trim(),
-      puntos: 250,
+      puntos: 0,
       nivel: "Bronce",
       compras: 0,
       registrado: hoy(),
@@ -1555,7 +1448,7 @@ const PanelRegistro = ({
       tipo: "registro",
       dni: nuevo.dni,
       nombre: `${nuevo.nombre} ${nuevo.apellido}`,
-      pts: 250,
+      pts: 0,
       sucursalId: sesion.sucursal.id,
       sucursal: sesion.sucursal.nombre,
       cajero: sesion.cajero,
@@ -1629,12 +1522,12 @@ const PanelRegistro = ({
       fontWeight: 900,
       color: "#6ee7b7"
     }
-  }, "250"), /*#__PURE__*/React.createElement("div", {
+  }, "\uD83C\uDFC6"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       color: "rgba(255,255,255,.5)"
     }
-  }, "pts bienvenida")), /*#__PURE__*/React.createElement("div", {
+  }, "Inscripto al sorteo")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "rgba(0,0,0,.2)",
       borderRadius: 10,
@@ -1781,7 +1674,7 @@ const PanelRegistro = ({
       color: "#15803d",
       fontWeight: 600
     }
-  }, "\u2B50 Al registrarse recibe ", /*#__PURE__*/React.createElement("strong", null, "250 puntos"), " de bienvenida"), /*#__PURE__*/React.createElement("button", {
+  }, "\uD83C\uDFC6 Al registrarse el cliente queda inscripto en el ", /*#__PURE__*/React.createElement("strong", null, "Gran Sorteo"), " · Sorteo 30 de junio"), /*#__PURE__*/React.createElement("button", {
     onClick: guardar,
     disabled: loading,
     style: {
@@ -3516,7 +3409,7 @@ const AdminCatalogo = ({ showToast }) => {
 // ── ADMIN CONFIG ──────────────────────────────────────────────────────────
 const AdminConfig = ({ showToast }) => {
   const [form, setForm] = React.useState({
-    porcentajeAcumulacion: 3,
+    porcentajeAcumulacion: 5,
     horasEsperaCashback: 24,
     valorPunto: 1,
     puntosMinimoCanje: 0,
@@ -3528,7 +3421,7 @@ const AdminConfig = ({ showToast }) => {
   React.useEffect(() => {
     fbGet("config", "programa").then(d => {
       if (d) setForm({
-        porcentajeAcumulacion: d.porcentajeAcumulacion || 3,
+        porcentajeAcumulacion: d.porcentajeAcumulacion || 5,
         horasEsperaCashback:   d.horasEsperaCashback   || 24,
         valorPunto:            d.valorPunto            || 1,
         puntosMinimoCanje:     d.puntosMinimoCanje     || 0,
@@ -3593,7 +3486,7 @@ const AdminConfig = ({ showToast }) => {
 
       React.createElement("div",{style:{background:"#f0fdf4",borderRadius:12,padding:"12px 16px",marginBottom:20,fontSize:12,color:"#15803d"}},
         React.createElement("strong",null,"Ejemplo con config actual: "),
-        `Compra de $10.000 → genera ${Math.floor(10000 * form.porcentajeAcumulacion/100).toLocaleString()} puntos ($${Math.floor(10000 * form.porcentajeAcumulacion/100 * form.valorPunto).toLocaleString()} cashback) · Disponible en ${form.horasEsperaCashback}hs`
+        `Ejemplo: Compra de $10.000 → genera ${Math.floor(10000 * form.porcentajeAcumulacion/100).toLocaleString()} puntos = $${Math.floor(10000 * form.porcentajeAcumulacion/100 * form.valorPunto).toLocaleString()} de cashback · Disponible en ${form.horasEsperaCashback}hs`
       ),
 
       React.createElement("button",{onClick:guardar,disabled:saving,
