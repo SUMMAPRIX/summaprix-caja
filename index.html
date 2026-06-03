@@ -672,7 +672,7 @@ const PanelVenta = ({
     setCliente(null);
     setStep("dni");
   };
-  const niv = cliente ? NIVEL[cliente.nivel] : null;
+  const niv = cliente ? (NIVEL[cliente.nivel] || NIVEL[calcNivel(cliente.puntos||0)] || NIVEL.Bronce) : null;
   const pts = monto ? Math.floor(Number(monto) * 0.05) : 0;
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1241,7 +1241,7 @@ const PanelCanje = ({ sesion, onCanje, showToast }) => {
 
   const reset = () => { setDni(""); setCliente(null); setMonto(""); setCupon(null); };
   const disponible = calcDisponible(cliente);
-  const niv = cliente ? NIVEL[cliente.nivel] : null;
+  const niv = cliente ? (NIVEL[cliente.nivel] || NIVEL[calcNivel(cliente.puntos||0)] || NIVEL.Bronce) : null;
 
   return React.createElement("div", { style:{maxWidth:820} },
     React.createElement("div", {style:{marginBottom:24}},
@@ -1268,7 +1268,7 @@ const PanelCanje = ({ sesion, onCanje, showToast }) => {
       // Ficha cliente
       React.createElement("div", {style:{background:"#fff",borderRadius:18,padding:22,boxShadow:"0 2px 10px rgba(0,0,0,.06)"}},
         React.createElement("div", {style:{display:"flex",alignItems:"center",gap:12,marginBottom:18,paddingBottom:18,borderBottom:"1px solid #f3f4f6"}},
-          React.createElement("div", {style:{width:44,height:44,borderRadius:12,background:niv.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}),
+          React.createElement("div", {style:{width:44,height:44,borderRadius:12,background:(niv&&niv.bg)||"#f3f4f6",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}, niv&&niv.emoji),
           React.createElement("div", {style:{flex:1}},
             React.createElement("div", {style:{fontSize:16,fontWeight:900,color:"#111"}}, `${cliente.nombre} ${cliente.apellido}`),
             React.createElement("div", {style:{fontSize:11,color:"#aaa"}}, `DNI ${cliente.dni} · Nivel ${cliente.nivel}`)
@@ -1756,7 +1756,7 @@ const PanelConsulta = () => {
     ...f,
     [k]: v
   }));
-  const niv = cliente ? NIVEL[cliente.nivel] : null;
+  const niv = cliente ? (NIVEL[cliente.nivel] || NIVEL[calcNivel(cliente.puntos||0)] || NIVEL.Bronce) : null;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: 700
